@@ -1,0 +1,191 @@
+openapi: "3.0.3"
+info:
+  title: Hotel Booking API
+  version: "2.0.0"
+  description: Mixed read/write hotel booking API
+servers:
+  - url: https://api.hotel.example.com/v2
+
+paths:
+  /hotels:
+    get:
+      operationId: search_hotels
+      summary: Search available hotels
+      tags: [hotels]
+      parameters:
+        - name: city
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Destination city
+        - name: check_in
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Check-in date (YYYY-MM-DD)
+        - name: check_out
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Check-out date (YYYY-MM-DD)
+        - name: guests
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 2
+          description: Number of guests
+        - name: max_price
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Maximum price per night in USD
+      responses:
+        "200":
+          description: List of available hotels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hotels:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Hotel"
+                  total:
+                    type: integer
+
+  /hotels/{hotelId}:
+    get:
+      operationId: get_hotel_details
+      summary: Get detailed information about a hotel
+      tags: [hotels]
+      parameters:
+        - name: hotelId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Hotel unique identifier
+      responses:
+        "200":
+          description: Hotel details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hotel"
+
+  /bookings:
+    post:
+      operationId: create_booking
+      summary: Create a new hotel booking
+      tags: [bookings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookingRequest"
+      responses:
+        "201":
+          description: Created booking
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+
+  /bookings/{bookingId}:
+    get:
+      operationId: get_booking
+      summary: Get booking by ID
+      tags: [bookings]
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Booking details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Booking"
+
+    delete:
+      operationId: cancel_booking
+      summary: Cancel a booking
+      tags: [bookings]
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancellation confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+components:
+  schemas:
+    Hotel:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        city:
+          type: string
+        stars:
+          type: integer
+        price_per_night:
+          type: number
+        amenities:
+          type: array
+          items:
+            type: string
+
+    BookingRequest:
+      type: object
+      properties:
+        hotel_id:
+          type: string
+        check_in:
+          type: string
+        check_out:
+          type: string
+        guests:
+          type: integer
+        guest_name:
+          type: string
+
+    Booking:
+      type: object
+      properties:
+        booking_id:
+          type: string
+        hotel_id:
+          type: string
+        status:
+          type: string
+        total_price:
+          type: number
+        check_in:
+          type: string
+        check_out:
+          type: string

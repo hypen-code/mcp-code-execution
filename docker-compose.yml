@@ -1,0 +1,36 @@
+version: "3.9"
+
+networks:
+  mfp_network:
+    driver: bridge
+
+services:
+  mfp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mfp-server
+    environment:
+      - MFP_LOG_LEVEL=INFO
+      - MFP_COMPILE_ON_STARTUP=true
+      - MFP_DOCKER_IMAGE=mfp-sandbox:latest
+      - MFP_NETWORK_MODE=mfp_network
+      - MFP_CACHE_ENABLED=true
+      # Override with real values via .env file:
+      # MFP_WEATHER_BASE_URL=https://api.weather.example.com/v1
+      # MFP_WEATHER_AUTH=Authorization: Bearer <token>
+    volumes:
+      - ./config:/app/config:ro
+      - ./compiled:/app/compiled
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock # Docker-in-Docker for sandbox
+    ports:
+      - "8000:8000"
+    networks:
+      - mfp_network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

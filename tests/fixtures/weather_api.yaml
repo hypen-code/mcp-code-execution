@@ -1,0 +1,98 @@
+openapi: "3.0.3"
+info:
+  title: Weather API
+  version: "1.0.0"
+  description: Simple read-only weather forecast API
+servers:
+  - url: https://api.weather.example.com/v1
+
+paths:
+  /weather/current:
+    get:
+      operationId: get_current_weather
+      summary: Get current weather for a location
+      tags: [weather]
+      parameters:
+        - name: city
+          in: query
+          required: true
+          schema:
+            type: string
+          description: City name (e.g., "London")
+        - name: units
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [metric, imperial, kelvin]
+            default: metric
+          description: Temperature unit system
+      responses:
+        "200":
+          description: Current weather data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  temperature:
+                    type: number
+                  feels_like:
+                    type: number
+                  humidity:
+                    type: integer
+                  wind_speed:
+                    type: number
+                  condition:
+                    type: string
+                  city:
+                    type: string
+
+  /weather/forecast:
+    get:
+      operationId: get_weather_forecast
+      summary: Get 5-day weather forecast for a city
+      tags: [weather]
+      parameters:
+        - name: city
+          in: query
+          required: true
+          schema:
+            type: string
+          description: City name
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+          description: Number of forecast days (1-7)
+        - name: units
+          in: query
+          required: false
+          schema:
+            type: string
+            default: metric
+      responses:
+        "200":
+          description: Multi-day forecast
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  city:
+                    type: string
+                  forecasts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                        high:
+                          type: number
+                        low:
+                          type: number
+                        condition:
+                          type: string
