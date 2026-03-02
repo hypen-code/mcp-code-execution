@@ -43,6 +43,7 @@ def create_server(config: MFPConfig) -> FastMCP:
     )
 
     registry = Registry(config.compiled_output_dir)
+    registry.load()
     cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
     executor = CodeExecutor(config, cache)
 

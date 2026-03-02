@@ -106,16 +106,15 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 {
   "mcpServers": {
     "mfp": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--env-file", "/path/to/.env",
-        "-v", "/path/to/compiled:/app/compiled",
-        "-v", "/var/run/docker.sock:/var/run/docker.sock",
-        "--network", "mfp_network",
-        "mfp-server:latest",
-        "mfp", "serve"
-      ]
+      "command": "~/mcp-code-execution/.venv/bin/mfp",
+      "args": ["serve"],
+      "env": {
+        "MFP_COMPILED_OUTPUT_DIR": "~/mcp-code-execution/compiled",
+        "MFP_SWAGGER_CONFIG_FILE": "~/mcp-code-execution/config/swaggers.yaml",
+        "MFP_DOCKER_IMAGE": "mfp-sandbox:latest",
+        "MFP_NETWORK_MODE": "mfp_network",
+        "MFP_CACHE_DB_PATH": "~/mcp-code-execution/data/cache.db"
+      }
     }
   }
 }
