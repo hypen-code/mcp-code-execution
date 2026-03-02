@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env relative to this file's location (project root), not CWD
+_ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 
 
 class MFPConfig(BaseSettings):
@@ -11,7 +16,7 @@ class MFPConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="MFP_",
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -35,6 +40,7 @@ class MFPConfig(BaseSettings):
 
     # Executor
     docker_image: str = "mfp-sandbox:latest"
+    docker_host: str = ""  # e.g. unix:///home/user/.docker/desktop/docker.sock
     execution_timeout_seconds: int = 30
     max_output_size_bytes: int = 1_048_576  # 1MB
     network_mode: str = "mfp_network"

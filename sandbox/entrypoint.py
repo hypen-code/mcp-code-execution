@@ -8,7 +8,7 @@ The executed code must define either:
 
 from __future__ import annotations
 
-import io
+import builtins
 import json
 import sys
 import traceback
@@ -23,21 +23,11 @@ def main() -> None:
         return
 
     local_ns: dict = {}
-    # Minimal safe builtins — no file access, no exec, no dangerous calls
-    safe_builtins = {
-        k: v
-        for k, v in __builtins__.items()  # type: ignore[union-attr]
-        if k
-        not in {
-            "open",
-            "exec",
-            "eval",
-            "compile",
-            "__import__",
-            "input",
-            "breakpoint",
-        }
-    }
+    # Block dangerous builtins — keep __import__ so import statements work.
+    # Security is enforced by the Docker container itself (read-only FS,
+    # no network outside mfp_network, non-root user, resource limits).
+    _blocked = {"open", "exec", "eval", "compile", "input", "breakpoint"}
+    safe_builtins = {k: v for k, v in vars(builtins).items() if k not in _blocked}
 
     try:
         compiled_code = compile(code, "<mfp>", "exec")
@@ -49,8 +39,7 @@ def main() -> None:
         elif "result" in local_ns:
             output = local_ns["result"]
         else:
-            output = {"error": "Code must define 'result' variable or 'main()' function"}
-            print(json.dumps({"success": False, "error": output["error"]}))
+            print(json.dumps({"success": False, "error": "Code must define 'result' variable or 'main()' function"}))
             return
 
         print(json.dumps({"success": True, "data": output}, default=str))

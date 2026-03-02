@@ -7,17 +7,13 @@ import subprocess
 import time
 from pathlib import Path
 
-import docker
-import docker.errors
-from docker import DockerClient
-
 from mfp.config import MFPConfig
 from mfp.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
 from mfp.models import ExecutionResult
 from mfp.runtime.cache import CacheStore
 from mfp.security.ast_guard import ASTGuard
 from mfp.security.vault import build_all_server_env_vars
-from mfp.utils.hashing import combine_hashes, hash_code
+from mfp.utils.hashing import combine_hashes
 from mfp.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -59,25 +55,7 @@ class CodeExecutor:
         self._config = config
         self._cache = cache
         self._ast_guard = ASTGuard()
-        self._docker_client: DockerClient | None = None
         self._compiled_dir = Path(config.compiled_output_dir)
-
-    def _get_docker_client(self) -> DockerClient:
-        """Get or create the Docker client (lazy initialization).
-
-        Returns:
-            Connected Docker client.
-
-        Raises:
-            ExecutionError: If Docker is not available.
-        """
-        if self._docker_client is None:
-            try:
-                self._docker_client = docker.from_env()
-                self._docker_client.ping()
-            except docker.errors.DockerException as exc:
-                raise ExecutionError(f"Docker is not available: {exc}") from exc
-        return self._docker_client
 
     async def execute(self, code: str, description: str) -> ExecutionResult:
         """Full execution pipeline: validate → lint → sandbox → cache.
@@ -184,7 +162,7 @@ _sys.path.insert(0, {compiled_path!r})
         return f"{path_injection}\n{user_code}"
 
     def _run_in_docker(self, code: str, servers_used: list[str]) -> str:
-        """Execute code in an isolated Docker container.
+        """Execute code in an isolated Docker container via CLI stdin pipe.
 
         Args:
             code: Complete Python code to execute.
@@ -197,78 +175,59 @@ _sys.path.insert(0, {compiled_path!r})
             ExecutionTimeoutError: If execution exceeds configured timeout.
             ExecutionError: On Docker errors or non-zero exit code.
         """
-        client = self._get_docker_client()
         env_vars = build_all_server_env_vars(servers_used)
-
         logger.debug("docker_execute_start", image=self._config.docker_image)
-        container = None
+
+        cmd = ["docker"]
+        if self._config.docker_host:
+            cmd += ["-H", self._config.docker_host]
+
+        cmd += [
+            "run", "--rm", "-i",
+            "--network", self._config.network_mode,
+            "--memory", "256m",
+            "--memory-swap", "256m",
+            "--cpu-period", "100000",
+            "--cpu-quota", "50000",
+            "--security-opt", "no-new-privileges:true",
+            "--read-only",
+            "--tmpfs", "/tmp:size=64m,mode=1777",  # noqa: S108
+        ]
+        for key, val in env_vars.items():
+            cmd += ["-e", f"{key}={val}"]
+        cmd.append(self._config.docker_image)
 
         try:
-            container = client.containers.run(  # type: ignore[union-attr]
-                image=self._config.docker_image,
-                command=None,
-                stdin_open=True,
-                detach=True,
-                environment=env_vars,
-                network_mode=self._config.network_mode,
-                mem_limit="256m",
-                memswap_limit="256m",
-                cpu_period=100_000,
-                cpu_quota=50_000,  # 50% of one CPU
-                security_opt=["no-new-privileges:true"],
-                read_only=True,
-                tmpfs={"/tmp": "size=64m,mode=1777"},  # noqa: S108
-                remove=False,  # We remove manually after output capture
-                stdout=True,
-                stderr=True,
+            result = subprocess.run(  # noqa: S603
+                cmd,
+                input=code.encode("utf-8"),
+                capture_output=True,
+                timeout=self._config.execution_timeout_seconds,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise ExecutionTimeoutError(
+                f"Execution timed out after {self._config.execution_timeout_seconds}s",
+                exit_code=124,
+            ) from exc
+        except FileNotFoundError as exc:
+            raise ExecutionError("docker CLI not found in PATH") from exc
 
-            # Send code via stdin
-            sock = container.attach_socket(params={"stdin": 1, "stream": 1})
-            sock._sock.sendall(code.encode("utf-8"))  # noqa: SLF001
-            sock._sock.close()  # noqa: SLF001
+        stdout = result.stdout.decode("utf-8", errors="replace")[:_MAX_OUTPUT_BYTES]
+        stderr = result.stderr.decode("utf-8", errors="replace")[:4096]
 
-            # Wait with timeout
-            try:
-                exit_result = container.wait(timeout=self._config.execution_timeout_seconds)
-            except Exception as exc:  # noqa: BLE001
-                container.kill()
-                raise ExecutionTimeoutError(
-                    f"Execution timed out after {self._config.execution_timeout_seconds}s",
-                    exit_code=124,
-                ) from exc
-
-            exit_code = exit_result.get("StatusCode", 1)
-            stdout_bytes = container.logs(stdout=True, stderr=False)
-            stderr_bytes = container.logs(stdout=False, stderr=True)
-
-            stdout = stdout_bytes.decode("utf-8", errors="replace")[: _MAX_OUTPUT_BYTES]
-            stderr = stderr_bytes.decode("utf-8", errors="replace")[:4096]
-
-            if exit_code != 0:
+        if result.returncode != 0:
+            if "Unable to find image" in stderr or "No such image" in stderr:
                 raise ExecutionError(
-                    f"Sandbox exited with code {exit_code}",
-                    stderr=stderr,
-                    exit_code=exit_code,
+                    f"Docker image '{self._config.docker_image}' not found. "
+                    f"Run: docker build -t {self._config.docker_image} sandbox/"
                 )
-
-            return stdout
-
-        except (ExecutionTimeoutError, ExecutionError, SecurityViolationError):
-            raise
-        except docker.errors.ImageNotFound:
             raise ExecutionError(
-                f"Docker image '{self._config.docker_image}' not found. Run: docker build -t {self._config.docker_image} sandbox/"
+                f"Sandbox exited with code {result.returncode}",
+                stderr=stderr,
+                exit_code=result.returncode,
             )
-        except docker.errors.DockerException as exc:
-            raise ExecutionError(f"Docker execution failed: {exc}") from exc
-        finally:
-            if container is not None:
-                try:
-                    container.remove(force=True)
-                except docker.errors.DockerException:
-                    pass
-                logger.debug("docker_container_removed")
+
+        return stdout
 
     def _parse_output(self, raw_output: str, elapsed_ms: int) -> ExecutionResult:
         """Parse Docker container stdout into an ExecutionResult.
