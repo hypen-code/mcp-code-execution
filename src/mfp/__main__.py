@@ -150,9 +150,9 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     transport = getattr(config_args, "transport", "stdio")
 
     if transport == "stdio":
-        mcp.run(transport="stdio")
+        await mcp.run_stdio_async()
     else:
-        mcp.run(transport="http", host=config.host, port=config.port)
+        await mcp.run_http_async(host=config.host, port=config.port)
 
     return 0
 
