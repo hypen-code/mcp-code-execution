@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mfp.errors import FunctionNotFoundError, ServerNotFoundError
-from mfp.models import EndpointManifest, FunctionInfo, ParamSchema, ResponseField, ServerInfo, ServerManifest
-from mfp.utils.logging import get_logger
+from mce.errors import FunctionNotFoundError, ServerNotFoundError
+from mce.models import EndpointManifest, FunctionInfo, ParamSchema, ResponseField, ServerInfo, ServerManifest
+from mce.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

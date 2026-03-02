@@ -8,10 +8,10 @@ from pathlib import Path
 
 import aiosqlite
 
-from mfp.errors import CacheError
-from mfp.models import CacheEntry, CacheSummary
-from mfp.utils.hashing import hash_code
-from mfp.utils.logging import get_logger
+from mce.errors import CacheError
+from mce.models import CacheEntry, CacheSummary
+from mce.utils.hashing import hash_code
+from mce.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

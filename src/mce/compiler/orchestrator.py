@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from mfp.compiler.codegen import CodeGenerator
-from mfp.compiler.swagger_parser import SwaggerParser
-from mfp.errors import CompileError
-from mfp.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
-from mfp.utils.logging import get_logger
+from mce.compiler.codegen import CodeGenerator
+from mce.compiler.swagger_parser import SwaggerParser
+from mce.errors import CompileError
+from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
+from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from mfp.config import MFPConfig
+    from mce.config import MCEConfig
 
 logger = get_logger(__name__)
 
@@ -35,11 +35,11 @@ class CompileResult:
 class Orchestrator:
     """Manages the full compile pipeline for all configured swagger sources."""
 
-    def __init__(self, config: MFPConfig) -> None:
+    def __init__(self, config: MCEConfig) -> None:
         """Initialize orchestrator with project config.
 
         Args:
-            config: MFP configuration instance.
+            config: MCE configuration instance.
         """
         self._config = config
         self._codegen = CodeGenerator()
@@ -190,7 +190,7 @@ class Orchestrator:
 
         init_path = server_dir / "__init__.py"
         init_path.write_text(
-            f'"""Auto-generated MFP module for {spec.name}."""\n',
+            f'"""Auto-generated MCE module for {spec.name}."""\n',
             encoding="utf-8",
         )
         logger.debug("functions_written", path=str(functions_path))

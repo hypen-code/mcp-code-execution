@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from mfp.errors import CompileError
-from mfp.utils.logging import get_logger
+from mce.errors import CompileError
+from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from mfp.models import EndpointSpec, ParamSchema, ServerSpec
+    from mce.models import EndpointSpec, ParamSchema, ServerSpec
 
 logger = get_logger(__name__)
 

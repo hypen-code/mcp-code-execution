@@ -1,4 +1,4 @@
-"""MFP FastMCP3 server — registers the 4 MCP tools exposed to LLMs."""
+"""MCE FastMCP3 server — registers the 4 MCP tools exposed to LLMs."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 
-from mfp.errors import (
+from mce.errors import (
     CacheError,
     ExecutionError,
     ExecutionTimeoutError,
@@ -15,30 +15,36 @@ from mfp.errors import (
     SecurityViolationError,
     ServerNotFoundError,
 )
-from mfp.runtime.cache import CacheStore
-from mfp.runtime.executor import CodeExecutor
-from mfp.runtime.registry import Registry
-from mfp.utils.logging import get_logger
+from mce.runtime.cache import CacheStore
+from mce.runtime.executor import CodeExecutor
+from mce.runtime.registry import Registry
+from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from mfp.config import MFPConfig
+    from mce.config import MCEConfig
 
 logger = get_logger(__name__)
 
 
-def create_server(config: MFPConfig) -> FastMCP:
-    """Create and configure the MFP FastMCP server with all 4 tools.
+def create_server(
+    config: MCEConfig,
+    registry: Registry | None = None,
+    cache: CacheStore | None = None,
+) -> FastMCP:
+    """Create and configure the MCE FastMCP server with all 4 tools.
 
     Args:
-        config: MFP configuration instance.
+        config: MCE configuration instance.
+        registry: Pre-loaded Registry. If None, a new one is created from config.
+        cache: Pre-initialized CacheStore. If None, a new one is created from config.
 
     Returns:
         Configured FastMCP server ready to run.
     """
     mcp: FastMCP = FastMCP(
-        name="MFP — ModelFunctionProtocol",
+        name="MCE — MCP Code Execution",
         instructions=(
-            "MFP allows you to discover, inspect, and execute API server functions "
+            "MCE allows you to discover, inspect, and execute API server functions "
             "through 4 meta-tools. Workflow: 1) list_servers to see what's available, "
             "2) get_function to get function signature and examples, "
             "3) execute_code to run Python code using those functions, "
@@ -46,9 +52,11 @@ def create_server(config: MFPConfig) -> FastMCP:
         ),
     )
 
-    registry = Registry(config.compiled_output_dir)
-    registry.load()
-    cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
+    if registry is None:
+        registry = Registry(config.compiled_output_dir)
+        registry.load()
+    if cache is None:
+        cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
     executor = CodeExecutor(config, cache)
 
     @mcp.tool()
@@ -262,11 +270,11 @@ def create_server(config: MFPConfig) -> FastMCP:
     return mcp
 
 
-async def initialize_server(config: MFPConfig, mcp: FastMCP) -> None:
+async def initialize_server(config: MCEConfig, mcp: FastMCP) -> None:
     """Run startup initialization: load registry and initialize cache.
 
     Args:
-        config: MFP configuration.
+        config: MCE configuration.
         mcp: FastMCP server instance (used to access registry/cache via closure — handled elsewhere).
     """
     # Registry and cache are loaded via the create_server closure
@@ -279,7 +287,7 @@ async def initialize_server(config: MFPConfig, mcp: FastMCP) -> None:
     await cache.cleanup_expired()
 
     logger.info(
-        "mfp_server_initialized",
+        "mce_server_initialized",
         compiled_dir=config.compiled_output_dir,
         cache_db=config.cache_db_path,
         log_level=config.log_level,

@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for MFP test suite."""
+"""Shared pytest fixtures for MCE test suite."""
 
 from __future__ import annotations
 
@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from mfp.config import MFPConfig
-from mfp.models import EndpointSpec, ParamSchema, ResponseField, ServerSpec, SwaggerSource
+from mce.config import MCEConfig
+from mce.models import EndpointSpec, ParamSchema, ResponseField, ServerSpec, SwaggerSource
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def mfp_config(tmp_path: Path) -> MFPConfig:
-    """Return a test MFPConfig pointing at temp directories."""
-    return MFPConfig(
+def mce_config(tmp_path: Path) -> MCEConfig:
+    """Return a test MCEConfig pointing at temp directories."""
+    return MCEConfig(
         compiled_output_dir=str(tmp_path / "compiled"),
         cache_db_path=str(tmp_path / "data" / "cache.db"),
         cache_enabled=True,

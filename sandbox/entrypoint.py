@@ -28,7 +28,7 @@ def main() -> None:
 
     # Block dangerous builtins — keep __import__ so import statements work.
     # Security is enforced by the Docker container itself (read-only FS,
-    # no network outside mfp_network, non-root user, resource limits).
+    # no network outside mce_network, non-root user, resource limits).
     _blocked = {"open", "exec", "eval", "compile", "input", "breakpoint"}
     safe_builtins = {k: v for k, v in vars(builtins).items() if k not in _blocked}
 
@@ -43,7 +43,7 @@ def main() -> None:
     sys.stdout = _captured
 
     try:
-        compiled_code = compile(code, "<mfp>", "exec")
+        compiled_code = compile(code, "<mce>", "exec")
         exec(compiled_code, namespace)  # noqa: S102
 
         # Convention: code must define main() or result

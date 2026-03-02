@@ -1,19 +1,19 @@
-"""MFP error hierarchy — all application exceptions defined here."""
+"""MCE error hierarchy — all application exceptions defined here."""
 
 
-class MFPError(Exception):
-    """Base error for all MFP exceptions."""
+class MCEError(Exception):
+    """Base error for all MCE exceptions."""
 
 
-class CompileError(MFPError):
+class CompileError(MCEError):
     """Swagger parsing or code generation failure."""
 
 
-class SecurityViolationError(MFPError):
+class SecurityViolationError(MCEError):
     """Code failed security scan."""
 
 
-class LintError(MFPError):
+class LintError(MCEError):
     """Code has syntax/lint issues."""
 
     def __init__(self, message: str, lint_output: str = "") -> None:
@@ -21,7 +21,7 @@ class LintError(MFPError):
         self.lint_output = lint_output
 
 
-class ExecutionError(MFPError):
+class ExecutionError(MCEError):
     """Sandbox execution failure."""
 
     def __init__(self, message: str, stderr: str = "", exit_code: int = 1) -> None:
@@ -34,19 +34,19 @@ class ExecutionTimeoutError(ExecutionError):
     """Code exceeded timeout."""
 
 
-class CacheError(MFPError):
+class CacheError(MCEError):
     """Cache read/write failure."""
 
 
-class ServerNotFoundError(MFPError):
+class ServerNotFoundError(MCEError):
     """Requested server does not exist."""
 
 
-class FunctionNotFoundError(MFPError):
+class FunctionNotFoundError(MCEError):
     """Requested function does not exist in server."""
 
 
-class ConfigurationError(MFPError):
+class ConfigurationError(MCEError):
     """Invalid or missing configuration."""
 
 

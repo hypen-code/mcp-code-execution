@@ -1,13 +1,13 @@
-# AGENTS.md — MFP Development Guide for AI Agents
+# AGENTS.md — MCE Development Guide for AI Agents
 
-> This file governs how AI agents develop, maintain, and extend the MFP
+> This file governs how AI agents develop, maintain, and extend the MCE
 > (ModelFunctionProtocol) codebase. Read it in full before making any change.
 
 ---
 
 ## 1. Project Overview
 
-**MFP** is a production-grade MCP server built with Python 3.13 and FastMCP.
+**MCE** is a production-grade MCP server built with Python 3.13 and FastMCP.
 It exposes **4 meta-tools** to LLMs instead of bloating the context with
 N per-endpoint tools. The 4 tools are:
 
@@ -34,11 +34,11 @@ They are injected exclusively as Docker environment variables at runtime.
 │   ├── Dockerfile                      ← python:3.13-slim sandbox image
 │   ├── entrypoint.py                   ← code receiver inside sandbox
 │   └── requirements.txt                ← httpx, pydantic, orjson only
-├── src/mfp/
+├── src/mce/
 │   ├── __init__.py                     ← version only
 │   ├── __main__.py                     ← CLI: compile | serve | run
 │   ├── server.py                       ← FastMCP tool registration (4 tools)
-│   ├── config.py                       ← MFPConfig (pydantic-settings)
+│   ├── config.py                       ← MCEConfig (pydantic-settings)
 │   ├── errors.py                       ← full exception hierarchy
 │   ├── models/__init__.py              ← ALL pydantic models (single file)
 │   ├── compiler/
@@ -59,7 +59,7 @@ They are injected exclusively as Docker environment variables at runtime.
 │       ├── logging.py                  ← structlog setup
 │       └── hashing.py                  ← SHA256 helpers for cache keys
 ├── tests/
-│   ├── conftest.py                     ← shared fixtures (mfp_config, specs, sources)
+│   ├── conftest.py                     ← shared fixtures (mce_config, specs, sources)
 │   ├── fixtures/                       ← YAML swagger test fixtures
 │   │   ├── weather_api.yaml            ← read-only, simple GET endpoints
 │   │   ├── hotel_api.yaml              ← read-write, path + body params
@@ -75,8 +75,8 @@ They are injected exclusively as Docker environment variables at runtime.
 
 **Rules:**
 - **Do not create files outside this structure** without explicit instruction.
-- **One model file**: all Pydantic models live in `src/mfp/models/__init__.py`.
-- **One error file**: all exceptions live in `src/mfp/errors.py`.
+- **One model file**: all Pydantic models live in `src/mce/models/__init__.py`.
+- **One error file**: all exceptions live in `src/mce/errors.py`.
 - Max file length: **400 lines**. Split if exceeded.
 - Max function length: **50 lines**. Decompose if exceeded.
 
@@ -88,7 +88,7 @@ They are injected exclusively as Docker environment variables at runtime.
 |---------|--------|-----|
 | Python version | **3.13+** | Required. Use `from __future__ import annotations`. |
 | MCP framework | **FastMCP ≥ 2.0** | `from fastmcp import FastMCP` |
-| Config | **pydantic-settings** `BaseSettings` | `MFP_` env prefix, `.env` file |
+| Config | **pydantic-settings** `BaseSettings` | `MCE_` env prefix, `.env` file |
 | HTTP client | **httpx** | Async + sync; used in generated code too |
 | Sandbox | **Docker SDK** (`docker` package) | Isolation, resource limits |
 | Cache | **aiosqlite** SQLite | Zero external dependency, async |
@@ -157,12 +157,12 @@ except:
     print("error")
 ```
 - **No bare `except:`** — always name the exception type.
-- **No `print()`** — use `logger = get_logger(__name__)` from `mfp.utils.logging`.
+- **No `print()`** — use `logger = get_logger(__name__)` from `mce.utils.logging`.
 - MCP tool functions must **never raise** — always return a dict with `error` key.
 
 ### 4.4 Logging
 ```python
-from mfp.utils.logging import get_logger
+from mce.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # CORRECT — structured key=value pairs
@@ -192,7 +192,7 @@ if method in {"post", "put", "patch", "delete"}: ...
 
 ### 4.6 Pydantic at All Boundaries
 - Every tool input/output uses a Pydantic model or `dict` derived from `.model_dump()`.
-- Every config field uses `MFPConfig` (never raw `os.environ` in business logic).
+- Every config field uses `MCEConfig` (never raw `os.environ` in business logic).
 - Every cross-module data structure is a Pydantic model in `models/__init__.py`.
 
 ### 4.7 No Mutable Defaults
@@ -214,7 +214,7 @@ These rules protect against malicious LLM-generated code and credential leaks:
    called in `executor.py` *before* any Docker container is started. Never bypass it.
 
 2. **Credentials are never in code** — The vault (`security/vault.py`) builds
-   `MFP_{SERVER}_BASE_URL` and `MFP_{SERVER}_AUTH` env vars. These are passed
+   `MCE_{SERVER}_BASE_URL` and `MCE_{SERVER}_AUTH` env vars. These are passed
    to Docker via `environment=`. They must **never** appear in:
    - Generated `functions.py` files
    - Log messages
@@ -233,10 +233,10 @@ These rules protect against malicious LLM-generated code and credential leaks:
    - Non-root user (`executor` UID 1000) — enforced in `sandbox/Dockerfile`
    - No host volume mounts
 
-5. **Domain allowlist** — When `MFP_ALLOWED_DOMAINS` is set, `policies.py`
+5. **Domain allowlist** — When `MCE_ALLOWED_DOMAINS` is set, `policies.py`
    rejects any URL whose hostname is not in the list.
 
-6. **Code size limit** — Reject any code > `MFP_MAX_CODE_SIZE_BYTES` (default
+6. **Code size limit** — Reject any code > `MCE_MAX_CODE_SIZE_BYTES` (default
    64 KB) before AST parsing even begins.
 
 ---
@@ -250,7 +250,7 @@ tests/integration/ → may write to tmp_path, no live Docker required
 ```
 
 - **100% line coverage** is the target. Every branch must be tested.
-- Run `pytest --cov=mfp --cov-report=term-missing` to see gaps.
+- Run `pytest --cov=mce --cov-report=term-missing` to see gaps.
 - A PR that reduces coverage is **rejected**.
 
 ### 6.2 Fixture Usage
@@ -259,7 +259,7 @@ re-declaring inline. Key fixtures:
 
 | Fixture | Type | Purpose |
 |---------|------|---------|
-| `mfp_config` | `MFPConfig` | Points at `tmp_path`; safe for all tests |
+| `mce_config` | `MCEConfig` | Points at `tmp_path`; safe for all tests |
 | `sample_endpoint` | `EndpointSpec` | GET /weather/current with 2 params |
 | `sample_server_spec` | `ServerSpec` | weather server with 1 endpoint |
 | `weather_swagger_source` | `SwaggerSource` | Points at `tests/fixtures/weather_api.yaml` |
@@ -290,7 +290,7 @@ so no `@pytest.mark.asyncio` decorator is needed.
 - **httpx network calls**: use `respx` to mock `httpx` requests.
 - **Docker**: mock `docker.from_env()` and `DockerClient` with `unittest.mock.MagicMock`.
 - **Time**: use `unittest.mock.patch("time.time", return_value=...)` to freeze time.
-- **Environment variables**: use `monkeypatch.setenv("MFP_WEATHER_AUTH", "Bearer test")`.
+- **Environment variables**: use `monkeypatch.setenv("MCE_WEATHER_AUTH", "Bearer test")`.
 
 ### 6.7 Swagger Parser Tests
 The parser reads from `tests/fixtures/*.yaml` files — these are the single
@@ -316,12 +316,12 @@ database path across tests — isolation is mandatory.
 
 ### `errors.py`
 - All custom exceptions live here and **only** here.
-- Hierarchy: `MFPError` → domain-specific errors.
+- Hierarchy: `MCEError` → domain-specific errors.
 - `LintError` carries `.lint_output`; `ExecutionError` carries `.stderr` and `.exit_code`.
-- Never raise `MFPError` directly — use a specific subclass.
+- Never raise `MCEError` directly — use a specific subclass.
 
 ### `config.py`
-- `MFPConfig` is the single config object. Instantiate once in `__main__.py`.
+- `MCEConfig` is the single config object. Instantiate once in `__main__.py`.
 - Pass it as a constructor argument — never read `os.environ` outside `vault.py` and `config.py`.
 - `load_config()` is the only factory function.
 
@@ -346,7 +346,7 @@ database path across tests — isolation is mandatory.
 - `_safe_name()` sanitizes parameter names to valid Python identifiers.
 
 ### `compiler/templates/function.py.j2`
-- Generated file header: `# GENERATED BY MFP COMPILER — DO NOT EDIT`.
+- Generated file header: `# GENERATED BY MCE COMPILER — DO NOT EDIT`.
 - Every generated function has a Google-style docstring listing parameters.
 - Helper `_request()` function handles the actual `httpx.request()` call.
 - `_headers()` injects auth from `os.environ`.
@@ -390,7 +390,7 @@ database path across tests — isolation is mandatory.
 - Logs the **violation type** only — never log the full user code.
 
 ### `security/vault.py`
-- `build_server_env_vars(server_name)` reads `MFP_{SERVER}_BASE_URL` and `MFP_{SERVER}_AUTH`.
+- `build_server_env_vars(server_name)` reads `MCE_{SERVER}_BASE_URL` and `MCE_{SERVER}_AUTH`.
 - `resolve_env_references(value)` expands `${VAR_NAME}` placeholders.
 - Returns a plain `dict[str, str]` for Docker's `environment=` parameter.
 
@@ -402,9 +402,9 @@ database path across tests — isolation is mandatory.
 - Error returns always include `"error_type"` key for programmatic handling.
 
 ### `__main__.py`
-- CLI entry point: `mfp compile [--llm-enhance] [--dry-run]`
-- CLI entry point: `mfp serve [--transport stdio|http] [--host] [--port]`
-- CLI entry point: `mfp run` (compile + serve)
+- CLI entry point: `mce compile [--llm-enhance] [--dry-run]`
+- CLI entry point: `mce serve [--transport stdio|http] [--host] [--port]`
+- CLI entry point: `mce run` (compile + serve)
 - `argparse` only — no click, no typer.
 - `asyncio.run()` wraps all async commands.
 
@@ -419,7 +419,7 @@ database path across tests — isolation is mandatory.
 4. Update `README.md` tool table.
 
 ### 8.2 Adding a New Model
-1. Add to `src/mfp/models/__init__.py` under the correct section.
+1. Add to `src/mce/models/__init__.py` under the correct section.
 2. Write tests for model validation (optional fields, defaults, enum constraints).
 3. Never duplicate a model — check existing ones first.
 
@@ -434,8 +434,8 @@ database path across tests — isolation is mandatory.
 3. Test it in `tests/unit/test_swagger_parser.py`.
 
 ### 8.5 Modifying Generated Code Template
-1. Edit `src/mfp/compiler/templates/function.py.j2`.
-2. Run `mfp compile` on a fixture swagger and confirm valid Python output.
+1. Edit `src/mce/compiler/templates/function.py.j2`.
+2. Run `mce compile` on a fixture swagger and confirm valid Python output.
 3. Update `test_codegen.py` to assert the new structure.
 
 ### 8.6 Changing Cache Schema
@@ -471,22 +471,22 @@ ruff format --check src/ tests/
 mypy src/
 
 # Compile swagger sources
-mfp compile
+mce compile
 
 # Compile without writing output (validation)
-mfp compile --dry-run
+mce compile --dry-run
 
 # Start MCP server (stdio transport — for Claude Desktop)
-mfp serve
+mce serve
 
 # Start MCP server (HTTP transport)
-mfp serve --transport http --port 8000
+mce serve --transport http --port 8000
 
 # Build sandbox Docker image (required before execute_code works)
-docker build -t mfp-sandbox:latest sandbox/
+docker build -t mce-sandbox:latest sandbox/
 
 # Create Docker network (required for sandbox networking)
-docker network create mfp_network
+docker network create mce_network
 ```
 
 ---
@@ -519,9 +519,9 @@ A task is complete only when all of these are true:
 - [ ] All public functions have Google-style docstrings
 - [ ] `ruff check src/ tests/` exits 0
 - [ ] `mypy src/` exits 0
-- [ ] `pytest --cov=mfp` exits 0 with ≥ 100% line coverage for changed modules
+- [ ] `pytest --cov=mce` exits 0 with ≥ 100% line coverage for changed modules
 - [ ] No credentials appear in code, logs, or test assertions
 - [ ] No `print()` statements added
 - [ ] No new files created outside the defined structure (Section 2)
-- [ ] `mfp compile --dry-run` succeeds if compiler was touched
+- [ ] `mce compile --dry-run` succeeds if compiler was touched
 - [ ] Security guard tests pass if `ast_guard.py` was touched

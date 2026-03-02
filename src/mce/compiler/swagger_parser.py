@@ -9,10 +9,10 @@ from urllib.parse import urlparse
 import httpx
 import yaml
 
-from mfp.errors import CompileError, SwaggerFetchError
-from mfp.models import EndpointSpec, ParamSchema, ResponseField, ServerSpec, SwaggerSource
-from mfp.utils.hashing import hash_content
-from mfp.utils.logging import get_logger
+from mce.errors import CompileError, SwaggerFetchError
+from mce.models import EndpointSpec, ParamSchema, ResponseField, ServerSpec, SwaggerSource
+from mce.utils.hashing import hash_content
+from mce.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

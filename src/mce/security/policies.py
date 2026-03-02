@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from mfp.errors import SecurityViolationError
-from mfp.utils.logging import get_logger
+from mce.errors import SecurityViolationError
+from mce.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

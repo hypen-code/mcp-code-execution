@@ -1,8 +1,8 @@
-# MFP — ModelFunctionProtocol
+# MCE — ModelFunctionProtocol
 
-> **APIs were designed for developers. MFP recompiles them for AI.**
+> **APIs were designed for developers. MCE recompiles them for AI.**
 
-[![CI](https://github.com/your-org/mfp/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/mfp/actions)
+[![CI](https://github.com/your-org/mce/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/mce/actions)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -14,7 +14,7 @@
 
 ## The Solution
 
-MFP exposes **4 meta-tools** instead of N API-specific tools:
+MCE exposes **4 meta-tools** instead of N API-specific tools:
 
 ```
 list_servers     → discover available APIs
@@ -27,7 +27,7 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   MFP MCP Server                     │
+│                   MCE MCP Server                     │
 │                                                     │
 │  ┌───────────┐  ┌───────────┐  ┌────────────────┐  │
 │  │  Compiler  │  │  Runtime   │  │  Code Executor │  │
@@ -59,8 +59,8 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/your-org/mfp.git
-cd mfp
+git clone https://github.com/hypen-code/mcp-code-execution.git
+cd mcp-code-execution
 pip install -e .
 ```
 
@@ -77,14 +77,14 @@ cp config/swaggers.yaml.example config/swaggers.yaml
 ### 3. Build the Sandbox
 
 ```bash
-docker build -t mfp-sandbox:latest sandbox/
-docker network create mfp_network
+docker build -t mce-sandbox:latest sandbox/
+docker network create mce_network
 ```
 
 ### 4. Compile Swagger Sources
 
 ```bash
-mfp compile
+mce compile
 # ✅ Compiled: weather, hotel_booking (12 endpoints)
 ```
 
@@ -92,10 +92,10 @@ mfp compile
 
 ```bash
 # stdio mode (for Claude Desktop, Cursor, etc.)
-mfp serve
+mce serve
 
 # HTTP mode
-mfp serve --transport http --port 8000
+mce serve --transport http --port 8000
 ```
 
 ### 6. Connect to Your MCP Client
@@ -105,15 +105,15 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 ```json
 {
   "mcpServers": {
-    "mfp": {
-      "command": "~/mcp-code-execution/.venv/bin/mfp",
+    "mce": {
+      "command": "~/mcp-code-execution/.venv/bin/mce",
       "args": ["serve"],
       "env": {
-        "MFP_COMPILED_OUTPUT_DIR": "~/mcp-code-execution/compiled",
-        "MFP_SWAGGER_CONFIG_FILE": "~/mcp-code-execution/config/swaggers.yaml",
-        "MFP_DOCKER_IMAGE": "mfp-sandbox:latest",
-        "MFP_NETWORK_MODE": "mfp_network",
-        "MFP_CACHE_DB_PATH": "~/mcp-code-execution/data/cache.db"
+        "MCE_COMPILED_OUTPUT_DIR": "~/mcp-code-execution/compiled",
+        "MCE_SWAGGER_CONFIG_FILE": "~/mcp-code-execution/config/swaggers.yaml",
+        "MCE_DOCKER_IMAGE": "mce-sandbox:latest",
+        "MCE_NETWORK_MODE": "mce_network",
+        "MCE_CACHE_DB_PATH": "~/mcp-code-execution/data/cache.db"
       }
     }
   }
@@ -147,14 +147,14 @@ LLM → get_cached_code(search="weather")
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MFP_LOG_LEVEL` | `INFO` | Log verbosity |
-| `MFP_DOCKER_IMAGE` | `mfp-sandbox:latest` | Sandbox image name |
-| `MFP_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
-| `MFP_CACHE_ENABLED` | `true` | Enable code caching |
-| `MFP_CACHE_TTL_SECONDS` | `3600` | Cache entry lifetime |
-| `MFP_COMPILED_OUTPUT_DIR` | `./compiled` | Compiled functions directory |
-| `MFP_{SERVER}_BASE_URL` | — | API base URL per server |
-| `MFP_{SERVER}_AUTH` | — | Auth header per server |
+| `MCE_LOG_LEVEL` | `INFO` | Log verbosity |
+| `MCE_DOCKER_IMAGE` | `mce-sandbox:latest` | Sandbox image name |
+| `MCE_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
+| `MCE_CACHE_ENABLED` | `true` | Enable code caching |
+| `MCE_CACHE_TTL_SECONDS` | `3600` | Cache entry lifetime |
+| `MCE_COMPILED_OUTPUT_DIR` | `./compiled` | Compiled functions directory |
+| `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
+| `MCE_{SERVER}_AUTH` | — | Auth header per server |
 
 ### Swagger Config (`config/swaggers.yaml`)
 
@@ -169,7 +169,7 @@ servers:
 
 ## Security
 
-MFP uses a **defense-in-depth** approach:
+MCE uses a **defense-in-depth** approach:
 
 1. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Blocks dangerous imports (`os`, `sys`, `subprocess`, `socket`) and calls (`eval`, `exec`, `open`, `__import__`).
 

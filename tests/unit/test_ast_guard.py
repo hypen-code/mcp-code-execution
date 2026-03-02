@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from mfp.errors import SecurityViolationError
-from mfp.security.ast_guard import ASTGuard
+from mce.errors import SecurityViolationError
+from mce.security.ast_guard import ASTGuard
 
 
 @pytest.fixture

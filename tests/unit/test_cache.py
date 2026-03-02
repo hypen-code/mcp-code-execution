@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mfp.runtime.cache import CacheStore
+from mce.runtime.cache import CacheStore
 
 if TYPE_CHECKING:
     from pathlib import Path
