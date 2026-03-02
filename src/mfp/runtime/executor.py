@@ -189,16 +189,26 @@ _sys.path.insert(0, {self._CONTAINER_COMPILED_PATH!r})
 
         compiled_host_path = str(self._compiled_dir.resolve())
         cmd += [
-            "run", "--rm", "-i",
-            "--network", self._config.network_mode,
-            "--memory", "256m",
-            "--memory-swap", "256m",
-            "--cpu-period", "100000",
-            "--cpu-quota", "50000",
-            "--security-opt", "no-new-privileges:true",
+            "run",
+            "--rm",
+            "-i",
+            "--network",
+            self._config.network_mode,
+            "--memory",
+            "256m",
+            "--memory-swap",
+            "256m",
+            "--cpu-period",
+            "100000",
+            "--cpu-quota",
+            "50000",
+            "--security-opt",
+            "no-new-privileges:true",
             "--read-only",
-            "--tmpfs", "/tmp:size=64m,mode=1777",  # noqa: S108
-            "-v", f"{compiled_host_path}:{self._CONTAINER_COMPILED_PATH}:ro",
+            "--tmpfs",
+            "/tmp:size=64m,mode=1777",  # noqa: S108
+            "-v",
+            f"{compiled_host_path}:{self._CONTAINER_COMPILED_PATH}:ro",
         ]
         for key, val in env_vars.items():
             cmd += ["-e", f"{key}={val}"]

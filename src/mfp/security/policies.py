@@ -25,9 +25,7 @@ def enforce_read_only(method: str, server_name: str) -> None:
     """
     if method.upper() in _MUTATING_METHODS:
         logger.warning("read_only_violation", server=server_name, method=method)
-        raise SecurityViolationError(
-            f"Server '{server_name}' is read-only but code attempts {method} operation"
-        )
+        raise SecurityViolationError(f"Server '{server_name}' is read-only but code attempts {method} operation")
 
 
 def check_domain_allowed(url: str, allowed_domains: list[str]) -> None:
@@ -50,6 +48,4 @@ def check_domain_allowed(url: str, allowed_domains: list[str]) -> None:
 
     if not any(hostname == domain or hostname.endswith(f".{domain}") for domain in allowed_domains):
         logger.warning("domain_blocked", url=url, hostname=hostname)
-        raise SecurityViolationError(
-            f"Domain '{hostname}' is not in the allowed domains list"
-        )
+        raise SecurityViolationError(f"Domain '{hostname}' is not in the allowed domains list")

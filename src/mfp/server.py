@@ -69,10 +69,7 @@ def create_server(config: MFPConfig) -> FastMCP:
                     {
                         "name": s.name,
                         "description": s.description,
-                        "functions": [
-                            {"name": fn, "summary": s.function_summaries.get(fn, "")}
-                            for fn in s.functions
-                        ],
+                        "functions": [{"name": fn, "summary": s.function_summaries.get(fn, "")} for fn in s.functions],
                     }
                     for s in servers
                 ]

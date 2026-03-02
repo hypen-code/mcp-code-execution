@@ -209,8 +209,7 @@ class Orchestrator:
                 method=ep.method,
                 path=ep.path,
                 parameters_summary=", ".join(
-                    f"{p.name} ({p.param_type}, {'required' if p.required else 'optional'})"
-                    for p in ep.parameters
+                    f"{p.name} ({p.param_type}, {'required' if p.required else 'optional'})" for p in ep.parameters
                 ),
                 response_summary=", ".join(r.name for r in ep.response_schema) or "response data",
             )

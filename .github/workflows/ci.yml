@@ -223,6 +223,8 @@ jobs:
         with:
           python-version: "3.13"
 
+      - run: pip install -e .
+
       - name: Check version consistency
         run: |
           VERSION=$(python -c "from mfp import __version__; print(__version__)")

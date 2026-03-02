@@ -138,9 +138,7 @@ class CacheStore:
         try:
             async with aiosqlite.connect(self._db_path) as db:
                 db.row_factory = aiosqlite.Row
-                async with db.execute(
-                    "SELECT * FROM code_cache WHERE id = ?", (entry_id,)
-                ) as cursor:
+                async with db.execute("SELECT * FROM code_cache WHERE id = ?", (entry_id,)) as cursor:
                     row = await cursor.fetchone()
 
                 if row is None:
@@ -238,9 +236,7 @@ class CacheStore:
         """
         try:
             async with aiosqlite.connect(self._db_path) as db:
-                cursor = await db.execute(
-                    "DELETE FROM code_cache WHERE swagger_hash = ?", (swagger_hash,)
-                )
+                cursor = await db.execute("DELETE FROM code_cache WHERE swagger_hash = ?", (swagger_hash,))
                 await db.commit()
                 count = cursor.rowcount
 
@@ -263,9 +259,7 @@ class CacheStore:
         now = time.time()
         try:
             async with aiosqlite.connect(self._db_path) as db:
-                cursor = await db.execute(
-                    "DELETE FROM code_cache WHERE (? - created_at) >= ttl_seconds", (now,)
-                )
+                cursor = await db.execute("DELETE FROM code_cache WHERE (? - created_at) >= ttl_seconds", (now,))
                 await db.commit()
                 count = cursor.rowcount
 

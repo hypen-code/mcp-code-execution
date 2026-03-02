@@ -160,9 +160,7 @@ class Registry:
         """
         if server_name not in self._servers:
             available = list(self._servers.keys())
-            raise ServerNotFoundError(
-                f"Server '{server_name}' not found. Available: {available}"
-            )
+            raise ServerNotFoundError(f"Server '{server_name}' not found. Available: {available}")
         return self._servers[server_name]
 
     def _find_endpoint(self, manifest: ServerManifest, server_name: str, function_name: str) -> EndpointManifest:

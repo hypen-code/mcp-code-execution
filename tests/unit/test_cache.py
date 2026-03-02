@@ -72,6 +72,7 @@ async def test_use_count_increments_on_duplicate(cache: CacheStore) -> None:
 
     # Same code -> same ID -> use_count should be 2
     import hashlib  # noqa: PLC0415
+
     normalized = "\n".join(line.rstrip() for line in code.splitlines() if line.strip())
     entry_id = hashlib.sha256(normalized.encode()).hexdigest()
 

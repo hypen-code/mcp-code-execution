@@ -81,9 +81,7 @@ async def enhance_with_llm(code: str, server_name: str, config: MFPConfig) -> st
         return enhanced
 
     except ImportError as exc:
-        raise CompileError(
-            "litellm package required for LLM enhancement: pip install mfp[llm]"
-        ) from exc
+        raise CompileError("litellm package required for LLM enhancement: pip install mfp[llm]") from exc
     except Exception as exc:  # noqa: BLE001
         logger.warning("llm_enhance_failed", server=server_name, model=config.llm_model, error=str(exc))
         return code  # Fall back to original generated code

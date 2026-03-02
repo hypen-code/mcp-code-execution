@@ -23,6 +23,7 @@ def resolve_env_references(value: str) -> str:
         String with all resolvable references replaced by env values.
         Unresolvable references are left as-is and a warning is logged.
     """
+
     def replace_ref(match: re.Match[str]) -> str:
         var_name = match.group(1)
         resolved = os.environ.get(var_name)
