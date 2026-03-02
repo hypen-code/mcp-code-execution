@@ -114,6 +114,7 @@ class ExecutionResult(BaseModel):
     data: dict[str, Any] | list[Any] | str | None = None
     error: str | None = None
     traceback: str | None = None  # Only populated in debug mode
+    prints: str | None = None  # Captured stdout from print() calls in user code
     execution_time_ms: int = 0
     cache_id: str | None = None
 

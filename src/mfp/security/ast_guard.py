@@ -125,7 +125,6 @@ _BLOCKED_CALLS: frozenset[str] = frozenset(
         "__import__",
         "open",
         "input",
-        "print",
         "breakpoint",
         "vars",
         "dir",

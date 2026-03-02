@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastmcp import FastMCP
 
 from mfp.config import MFPConfig
@@ -179,6 +181,74 @@ def create_server(config: MFPConfig) -> FastMCP:
         except Exception as exc:  # noqa: BLE001
             logger.exception("get_cached_code_unexpected_error")
             return {"error": "Internal error", "error_type": "internal"}
+
+    @mcp.tool()
+    async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict:  # type: ignore[return]
+        """Re-execute a cached code snippet, optionally injecting new parameter values.
+
+        Fetches the original code by cache_id and re-runs it through the full
+        execution pipeline (security scan → sandbox → cached on success).
+
+        If params are provided, each key-value pair is injected as a top-level
+        variable assignment AND into a `_params` dict BEFORE the cached code runs.
+        This means any global variable in the cached code can be overridden:
+
+            # Cached code references global `output_format`:
+            result = getpublicip(format=output_format)
+
+            # Call with: params={"output_format": "text"}
+            # → injects `output_format = "text"` before the code executes
+
+        Code can also read from `_params` directly for optional values:
+            fmt = _params.get("output_format", "json")
+
+        Args:
+            cache_id: Cache entry ID from get_cached_code.
+            params: Optional key→value overrides injected as top-level variables.
+
+        Returns:
+            Same structure as execute_code: success, data, error, execution_time_ms, cache_id.
+        """
+        try:
+            entry = await cache.get(cache_id)
+        except CacheError as exc:
+            return {"success": False, "error": f"Cache unavailable: {exc}", "error_type": "cache"}
+
+        if entry is None:
+            return {
+                "success": False,
+                "error": f"Cache entry '{cache_id[:16]}…' not found or expired",
+                "error_type": "cache_miss",
+            }
+
+        code = entry.code
+        if params:
+            # Append AFTER the cached code so param values override any
+            # same-named variable the code sets at module level. Functions
+            # defined in the code read globals, so they pick up these values.
+            param_lines = "\n".join(f"{k} = {v!r}" for k, v in params.items())
+            code = f"{code}\n\n# --- injected parameter overrides ---\n_params = {params!r}\n{param_lines}\n"
+
+        logger.info("tool_run_cached_code_called", cache_id=cache_id[:16], has_params=bool(params))
+
+        try:
+            result = await executor.execute(code, entry.description)
+            return result.model_dump()
+        except SecurityViolationError as exc:
+            return {"success": False, "error": f"Security violation: {exc}", "error_type": "security"}
+        except LintError as exc:
+            return {"success": False, "error": f"Code has issues: {exc}", "lint_output": exc.lint_output, "error_type": "lint"}
+        except ExecutionTimeoutError:
+            return {
+                "success": False,
+                "error": f"Execution timed out after {config.execution_timeout_seconds}s",
+                "error_type": "timeout",
+            }
+        except ExecutionError as exc:
+            return {"success": False, "error": str(exc), "stderr": exc.stderr, "error_type": "execution"}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("run_cached_code_unexpected_error")
+            return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
 
     return mcp
 

@@ -4,11 +4,15 @@ This file runs INSIDE the Docker sandbox container. It must remain minimal and s
 The executed code must define either:
   - A `main()` function that returns the result, OR
   - A `result` variable containing the output
+
+print() calls inside user code are captured and returned in the `prints` field so they
+don't corrupt the JSON output line that the host reads.
 """
 
 from __future__ import annotations
 
 import builtins
+import io
 import json
 import sys
 import traceback
@@ -33,6 +37,11 @@ def main() -> None:
     # functions (e.g. `def main(): ... httpx.get(...)`).
     namespace: dict = {"__builtins__": safe_builtins}
 
+    # Redirect stdout so user print() calls don't corrupt the JSON result line.
+    _captured = io.StringIO()
+    _real_stdout = sys.stdout
+    sys.stdout = _captured
+
     try:
         compiled_code = compile(code, "<mfp>", "exec")
         exec(compiled_code, namespace)  # noqa: S102
@@ -43,12 +52,16 @@ def main() -> None:
         elif "result" in namespace:
             output = namespace["result"]
         else:
+            sys.stdout = _real_stdout
             print(json.dumps({"success": False, "error": "Code must define 'result' variable or 'main()' function"}))
             return
 
-        print(json.dumps({"success": True, "data": output}, default=str))
+        sys.stdout = _real_stdout
+        prints = _captured.getvalue() or None
+        print(json.dumps({"success": True, "data": output, "prints": prints}, default=str))
 
     except SyntaxError as exc:
+        sys.stdout = _real_stdout
         print(
             json.dumps(
                 {
@@ -59,6 +72,7 @@ def main() -> None:
             )
         )
     except Exception as exc:  # noqa: BLE001
+        sys.stdout = _real_stdout
         print(
             json.dumps(
                 {

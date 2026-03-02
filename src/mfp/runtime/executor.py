@@ -264,6 +264,7 @@ _sys.path.insert(0, {self._CONTAINER_COMPILED_PATH!r})
                 data=parsed.get("data") if success else None,
                 error=parsed.get("error") if not success else None,
                 traceback=parsed.get("traceback") if self._config.debug else None,
+                prints=parsed.get("prints"),
                 execution_time_ms=elapsed_ms,
             )
         except (json.JSONDecodeError, KeyError):
