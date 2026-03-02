@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
 
 from mfp.compiler.codegen import CodeGenerator
-from mfp.models import ServerSpec
+
+if TYPE_CHECKING:
+    from mfp.models import ServerSpec
 
 
 def test_generate_produces_valid_python(sample_server_spec: ServerSpec) -> None:

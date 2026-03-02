@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 
-from mfp.config import MFPConfig
 from mfp.errors import (
     CacheError,
     ExecutionError,
@@ -20,6 +19,9 @@ from mfp.runtime.cache import CacheStore
 from mfp.runtime.executor import CodeExecutor
 from mfp.runtime.registry import Registry
 from mfp.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from mfp.config import MFPConfig
 
 logger = get_logger(__name__)
 
@@ -50,7 +52,7 @@ def create_server(config: MFPConfig) -> FastMCP:
     executor = CodeExecutor(config, cache)
 
     @mcp.tool()
-    async def list_servers() -> dict:  # type: ignore[return]
+    async def list_servers() -> dict[str, Any]:
         """List all available API servers and their functions.
 
         Returns a compact overview of each server with:
@@ -80,7 +82,7 @@ def create_server(config: MFPConfig) -> FastMCP:
             return {"error": "Internal error loading servers", "detail": str(exc)}
 
     @mcp.tool()
-    async def get_function(server_name: str, function_name: str) -> dict:  # type: ignore[return]
+    async def get_function(server_name: str, function_name: str) -> dict[str, Any]:
         """Get detailed function signature and return schema.
 
         Args:
@@ -113,7 +115,7 @@ def create_server(config: MFPConfig) -> FastMCP:
             return {"error": "Internal error", "error_type": "internal", "detail": str(exc)}
 
     @mcp.tool()
-    async def execute_code(code: str, description: str) -> dict:  # type: ignore[return]
+    async def execute_code(code: str, description: str) -> dict[str, Any]:
         """Execute Python code in a sandboxed environment.
 
         The code runs in an isolated Docker container with access to API server functions.
@@ -138,7 +140,12 @@ def create_server(config: MFPConfig) -> FastMCP:
         except SecurityViolationError as exc:
             return {"success": False, "error": f"Security violation: {exc}", "error_type": "security"}
         except LintError as exc:
-            return {"success": False, "error": f"Code has issues: {exc}", "lint_output": exc.lint_output, "error_type": "lint"}
+            return {
+                "success": False,
+                "error": f"Code has issues: {exc}",
+                "lint_output": exc.lint_output,
+                "error_type": "lint",
+            }
         except ExecutionTimeoutError:
             return {
                 "success": False,
@@ -147,12 +154,12 @@ def create_server(config: MFPConfig) -> FastMCP:
             }
         except ExecutionError as exc:
             return {"success": False, "error": str(exc), "stderr": exc.stderr, "error_type": "execution"}
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("execute_code_unexpected_error")
             return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
 
     @mcp.tool()
-    async def get_cached_code(search: str | None = None) -> dict:  # type: ignore[return]
+    async def get_cached_code(search: str | None = None) -> dict[str, Any]:
         """List previously executed code that succeeded and is cached for reuse.
 
         Args:
@@ -178,12 +185,12 @@ def create_server(config: MFPConfig) -> FastMCP:
             }
         except CacheError as exc:
             return {"error": f"Cache unavailable: {exc}", "error_type": "cache"}
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("get_cached_code_unexpected_error")
             return {"error": "Internal error", "error_type": "internal"}
 
     @mcp.tool()
-    async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict:  # type: ignore[return]
+    async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Re-execute a cached code snippet, optionally injecting new parameter values.
 
         Fetches the original code by cache_id and re-runs it through the full
@@ -237,7 +244,12 @@ def create_server(config: MFPConfig) -> FastMCP:
         except SecurityViolationError as exc:
             return {"success": False, "error": f"Security violation: {exc}", "error_type": "security"}
         except LintError as exc:
-            return {"success": False, "error": f"Code has issues: {exc}", "lint_output": exc.lint_output, "error_type": "lint"}
+            return {
+                "success": False,
+                "error": f"Code has issues: {exc}",
+                "lint_output": exc.lint_output,
+                "error_type": "lint",
+            }
         except ExecutionTimeoutError:
             return {
                 "success": False,
@@ -246,7 +258,7 @@ def create_server(config: MFPConfig) -> FastMCP:
             }
         except ExecutionError as exc:
             return {"success": False, "error": str(exc), "stderr": exc.stderr, "error_type": "execution"}
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("run_cached_code_unexpected_error")
             return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
 

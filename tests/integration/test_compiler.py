@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from mfp.compiler.orchestrator import Orchestrator
-from mfp.config import MFPConfig
+
+if TYPE_CHECKING:
+    from mfp.config import MFPConfig
 
 
 async def test_compile_weather_api(tmp_path: Path, mfp_config: MFPConfig) -> None:
     """Full compile pipeline produces valid output for weather fixture."""
-    import yaml  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
 
     fixtures_dir = Path(__file__).parent.parent / "fixtures"
 

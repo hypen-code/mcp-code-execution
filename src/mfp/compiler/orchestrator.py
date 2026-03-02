@@ -6,16 +6,18 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from mfp.compiler.codegen import CodeGenerator
 from mfp.compiler.swagger_parser import SwaggerParser
-from mfp.config import MFPConfig
 from mfp.errors import CompileError
 from mfp.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
 from mfp.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from mfp.config import MFPConfig
 
 logger = get_logger(__name__)
 

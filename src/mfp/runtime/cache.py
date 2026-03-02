@@ -92,7 +92,8 @@ class CacheStore:
                 await db.execute(
                     """
                     INSERT INTO code_cache
-                        (id, description, code, servers_used, swagger_hash, created_at, last_used_at, use_count, ttl_seconds)
+                        (id, description, code, servers_used, swagger_hash,
+                         created_at, last_used_at, use_count, ttl_seconds)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         last_used_at = excluded.last_used_at,

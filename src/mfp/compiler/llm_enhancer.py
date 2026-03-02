@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from mfp.config import MFPConfig
+from typing import TYPE_CHECKING
+
 from mfp.errors import CompileError
 from mfp.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from mfp.config import MFPConfig
 
 logger = get_logger(__name__)
 
@@ -66,7 +70,7 @@ async def enhance_with_llm(code: str, server_name: str, config: MFPConfig) -> st
             messages=[{"role": "user", "content": _ENHANCE_PROMPT.format(code=code)}],
             max_tokens=8192,
         )
-        enhanced: str = response.choices[0].message.content.strip()  # type: ignore[union-attr]
+        enhanced: str = response.choices[0].message.content.strip()
         logger.info(
             "llm_enhanced",
             server=server_name,

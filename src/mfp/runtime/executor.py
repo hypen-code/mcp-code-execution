@@ -6,15 +6,18 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from mfp.config import MFPConfig
 from mfp.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
 from mfp.models import ExecutionResult
-from mfp.runtime.cache import CacheStore
 from mfp.security.ast_guard import ASTGuard
 from mfp.security.vault import build_all_server_env_vars
 from mfp.utils.hashing import combine_hashes
 from mfp.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from mfp.config import MFPConfig
+    from mfp.runtime.cache import CacheStore
 
 logger = get_logger(__name__)
 
@@ -136,7 +139,7 @@ class CodeExecutor:
             )
             if result.returncode != 0:
                 raise LintError(
-                    f"Code has lint issues",
+                    "Code has lint issues",
                     lint_output=result.stdout[:2000],
                 )
         except subprocess.TimeoutExpired:

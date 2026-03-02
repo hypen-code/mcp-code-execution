@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from mfp.runtime.cache import CacheStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

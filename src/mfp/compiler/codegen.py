@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from mfp.errors import CompileError
-from mfp.models import EndpointSpec, ParamSchema, ServerSpec
 from mfp.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from mfp.models import EndpointSpec, ParamSchema, ServerSpec
 
 logger = get_logger(__name__)
 

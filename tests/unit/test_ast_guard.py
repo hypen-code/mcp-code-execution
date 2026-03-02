@@ -113,7 +113,7 @@ def test_dunder_globals_blocked(guard: ASTGuard) -> None:
 
 def test_environ_access_blocked(guard: ASTGuard) -> None:
     with pytest.raises(SecurityViolationError, match="blocked_attribute"):
-        guard.validate("import os; x = os.environ['SECRET']")
+        guard.validate("x = something.environ['SECRET']")
 
 
 def test_invalid_syntax_raises_violation(guard: ASTGuard) -> None:

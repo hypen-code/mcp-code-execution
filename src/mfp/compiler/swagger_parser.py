@@ -346,7 +346,7 @@ class SwaggerParser:
         if any(k in schema for k in _COMPLEX_KEYWORDS):
             return None
 
-        return schema
+        return dict(schema)
 
     def _parse_response_schema(self, responses: dict[str, Any]) -> list[ResponseField]:
         """Extract response fields from 200/201 response schema.

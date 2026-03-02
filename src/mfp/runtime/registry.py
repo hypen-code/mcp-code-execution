@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from mfp.errors import FunctionNotFoundError, ServerNotFoundError
-from mfp.models import FunctionInfo, ParamSchema, ResponseField, ServerInfo, ServerManifest
+from mfp.models import EndpointManifest, FunctionInfo, ParamSchema, ResponseField, ServerInfo, ServerManifest
 from mfp.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -165,7 +165,7 @@ class Registry:
             )
         return self._servers[server_name]
 
-    def _find_endpoint(self, manifest: ServerManifest, server_name: str, function_name: str) -> "EndpointManifestRef":  # noqa: F821
+    def _find_endpoint(self, manifest: ServerManifest, server_name: str, function_name: str) -> EndpointManifest:
         """Find an endpoint entry in a manifest.
 
         Args:
@@ -179,11 +179,10 @@ class Registry:
         Raises:
             FunctionNotFoundError: If function not in manifest.
         """
-        from mfp.models import EndpointManifest  # noqa: PLC0415
 
         for ep in manifest.endpoints:
             if ep.function_name == function_name:
-                return ep  # type: ignore[return-value]
+                return ep
 
         available = [ep.function_name for ep in manifest.endpoints]
         raise FunctionNotFoundError(
