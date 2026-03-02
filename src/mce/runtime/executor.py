@@ -8,16 +8,16 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mfp.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
-from mfp.models import ExecutionResult
-from mfp.security.ast_guard import ASTGuard
-from mfp.security.vault import build_all_server_env_vars
-from mfp.utils.hashing import combine_hashes
-from mfp.utils.logging import get_logger
+from mce.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
+from mce.models import ExecutionResult
+from mce.security.ast_guard import ASTGuard
+from mce.security.vault import build_all_server_env_vars
+from mce.utils.hashing import combine_hashes
+from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from mfp.config import MFPConfig
-    from mfp.runtime.cache import CacheStore
+    from mce.config import MCEConfig
+    from mce.runtime.cache import CacheStore
 
 logger = get_logger(__name__)
 
@@ -48,11 +48,11 @@ def _detect_servers_used(code: str) -> list[str]:
 class CodeExecutor:
     """Manages the full execution pipeline: validate → lint → sandbox → cache."""
 
-    def __init__(self, config: MFPConfig, cache: CacheStore) -> None:
+    def __init__(self, config: MCEConfig, cache: CacheStore) -> None:
         """Initialize the code executor.
 
         Args:
-            config: MFP configuration.
+            config: MCE configuration.
             cache: Cache store for persisting successful executions.
         """
         self._config = config
@@ -148,7 +148,7 @@ class CodeExecutor:
             logger.warning("ruff_not_found_skipped")
 
     # Container-side mount point for the compiled server functions
-    _CONTAINER_COMPILED_PATH = "/mfp_compiled"
+    _CONTAINER_COMPILED_PATH = "/mce_compiled"
 
     def _build_execution_code(self, user_code: str, servers_used: list[str]) -> str:
         """Build complete execution payload with sys.path injection.
@@ -300,7 +300,7 @@ _sys.path.insert(0, {self._CONTAINER_COMPILED_PATH!r})
         """
         # Import here to avoid circular imports
         try:
-            from mfp.runtime.registry import Registry  # noqa: PLC0415
+            from mce.runtime.registry import Registry  # noqa: PLC0415
 
             registry = Registry(self._config.compiled_output_dir)
             registry.load()

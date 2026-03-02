@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 
-from mfp.utils.logging import get_logger
+from mce.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ def resolve_env_references(value: str) -> str:
 def build_server_env_vars(server_name: str) -> dict[str, str]:
     """Build environment variable dict for a server's Docker container.
 
-    Reads MFP_<SERVER>_BASE_URL and MFP_<SERVER>_AUTH from the host environment
+    Reads MCE_<SERVER>_BASE_URL and MCE_<SERVER>_AUTH from the host environment
     and returns them for injection into the sandbox container. Credentials are
     NEVER embedded in generated code.
 
@@ -48,7 +48,7 @@ def build_server_env_vars(server_name: str) -> dict[str, str]:
     Returns:
         Dict of environment variables ready for Docker container injection.
     """
-    prefix = f"MFP_{server_name.upper()}_"
+    prefix = f"MCE_{server_name.upper()}_"
     env_vars: dict[str, str] = {}
 
     base_url_key = f"{prefix}BASE_URL"

@@ -1,24 +1,21 @@
-"""Demo script showing the MFP tool workflow for weather + hotel APIs."""
+"""Demo script showing the MCE tool workflow for weather + hotel APIs."""
 
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# This demo shows the expected LLM interaction flow with MFP tools.
-# Run after: mfp compile
+# This demo shows the expected LLM interaction flow with MCE tools.
+# Run after: mce compile
 # ---------------------------------------------------------------------------
 
 
 async def demo() -> None:
-    """Run a scripted MFP workflow demonstration."""
-    from mfp.config import load_config
-    from mfp.runtime.cache import CacheStore
-    from mfp.runtime.executor import CodeExecutor
-    from mfp.runtime.registry import Registry
-    from mfp.utils.logging import setup_logging
+    """Run a scripted MCE workflow demonstration."""
+    from mce.config import load_config
+    from mce.runtime.cache import CacheStore
+    from mce.runtime.registry import Registry
+    from mce.utils.logging import setup_logging
 
     setup_logging("INFO")
     config = load_config()
@@ -29,10 +26,8 @@ async def demo() -> None:
     cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
     await cache.initialize()
 
-    executor = CodeExecutor(config, cache)
-
     print("=" * 60)
-    print("MFP Demo Flow")
+    print("MCE Demo Flow")
     print("=" * 60)
 
     # Step 1: List servers
@@ -44,7 +39,7 @@ async def demo() -> None:
             print(f"    • {fn}: {summary}")
 
     if not servers:
-        print("  No compiled servers found. Run: mfp compile")
+        print("  No compiled servers found. Run: mce compile")
         return
 
     # Step 2: Get function details
@@ -66,7 +61,7 @@ async def demo() -> None:
         print("  No cached entries yet. Execute some code first!")
 
     print("\n" + "=" * 60)
-    print("Demo complete. Connect MFP to your MCP client to use live.")
+    print("Demo complete. Connect MCE to your MCP client to use live.")
     print("=" * 60)
 
 

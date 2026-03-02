@@ -1,24 +1,24 @@
 version: "3.9"
 
 networks:
-  mfp_network:
+  mce_network:
     driver: bridge
 
 services:
-  mfp:
+  mce:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mfp-server
+    container_name: mce-server
     environment:
-      - MFP_LOG_LEVEL=INFO
-      - MFP_COMPILE_ON_STARTUP=true
-      - MFP_DOCKER_IMAGE=mfp-sandbox:latest
-      - MFP_NETWORK_MODE=mfp_network
-      - MFP_CACHE_ENABLED=true
+      - MCE_LOG_LEVEL=INFO
+      - MCE_COMPILE_ON_STARTUP=true
+      - MCE_DOCKER_IMAGE=mce-sandbox:latest
+      - MCE_NETWORK_MODE=mce_network
+      - MCE_CACHE_ENABLED=true
       # Override with real values via .env file:
-      # MFP_WEATHER_BASE_URL=https://api.weather.example.com/v1
-      # MFP_WEATHER_AUTH=Authorization: Bearer <token>
+      # MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1
+      # MCE_WEATHER_AUTH=Authorization: Bearer <token>
     volumes:
       - ./config:/app/config:ro
       - ./compiled:/app/compiled
@@ -27,7 +27,7 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - mfp_network
+      - mce_network
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" ]

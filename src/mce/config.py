@@ -1,4 +1,4 @@
-"""Pydantic settings for MFP configuration loaded from environment variables."""
+"""Pydantic settings for MCE configuration loaded from environment variables."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 
 
-class MFPConfig(BaseSettings):
-    """Main MFP server configuration loaded from MFP_ prefixed environment variables."""
+class MCEConfig(BaseSettings):
+    """Main MCE server configuration loaded from MCE_ prefixed environment variables."""
 
     model_config = SettingsConfigDict(
-        env_prefix="MFP_",
+        env_prefix="MCE_",
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -39,11 +39,11 @@ class MFPConfig(BaseSettings):
     llm_model: str = "gemini/gemini-2.0-flash"
 
     # Executor
-    docker_image: str = "mfp-sandbox:latest"
+    docker_image: str = "mce-sandbox:latest"
     docker_host: str = ""  # e.g. unix:///home/user/.docker/desktop/docker.sock
     execution_timeout_seconds: int = 30
     max_output_size_bytes: int = 1_048_576  # 1MB
-    network_mode: str = "mfp_network"
+    network_mode: str = "mce_network"
 
     # Cache
     cache_enabled: bool = True
@@ -56,10 +56,10 @@ class MFPConfig(BaseSettings):
     max_code_size_bytes: int = 65_536  # 64KB
 
 
-def load_config() -> MFPConfig:
-    """Load and return the MFP configuration.
+def load_config() -> MCEConfig:
+    """Load and return the MCE configuration.
 
     Returns:
-        Populated MFPConfig instance.
+        Populated MCEConfig instance.
     """
-    return MFPConfig()
+    return MCEConfig()

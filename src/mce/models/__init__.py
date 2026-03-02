@@ -1,4 +1,4 @@
-"""Pydantic models for MFP — swagger/OpenAPI, functions, execution, and cache."""
+"""Pydantic models for MCE — swagger/OpenAPI, functions, execution, and cache."""
 
 from __future__ import annotations
 

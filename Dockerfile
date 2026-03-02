@@ -16,9 +16,9 @@ COPY config/ config/
 # Create data and compiled directories
 RUN mkdir -p /app/data /app/compiled
 
-ENV MFP_COMPILED_OUTPUT_DIR=/app/compiled
-ENV MFP_CACHE_DB_PATH=/app/data/cache.db
+ENV MCE_COMPILED_OUTPUT_DIR=/app/compiled
+ENV MCE_CACHE_DB_PATH=/app/data/cache.db
 
 EXPOSE 8000
 
-CMD ["mfp", "serve", "--transport", "http"]
+CMD ["mce", "serve", "--transport", "http"]

@@ -227,5 +227,5 @@ jobs:
 
       - name: Check version consistency
         run: |
-          VERSION=$(python -c "from mfp import __version__; print(__version__)")
+          VERSION=$(python -c "from mce import __version__; print(__version__)")
           echo "Version: $VERSION"

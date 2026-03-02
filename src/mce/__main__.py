@@ -1,4 +1,4 @@
-"""MFP CLI entry point — supports `compile`, `serve`, and combined `run` commands."""
+"""MCE CLI entry point — supports `compile`, `serve`, and combined `run` commands."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import sys
 
 from dotenv import load_dotenv
 
-from mfp.config import _ENV_FILE, load_config
-from mfp.utils.logging import get_logger, setup_logging
+from mce.config import _ENV_FILE, load_config
+from mce.utils.logging import get_logger, setup_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -19,8 +19,8 @@ def _build_parser() -> argparse.ArgumentParser:
         Configured ArgumentParser instance.
     """
     parser = argparse.ArgumentParser(
-        prog="mfp",
-        description="MFP — ModelFunctionProtocol: Turn any Swagger into LLM-native functions",
+        prog="mce",
+        description="MCE — ModelFunctionProtocol: Turn any Swagger into LLM-native functions",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -78,7 +78,7 @@ async def _cmd_compile(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 = success).
     """
-    from mfp.compiler.orchestrator import Orchestrator  # noqa: PLC0415
+    from mce.compiler.orchestrator import Orchestrator  # noqa: PLC0415
 
     config = load_config()
     orchestrator = Orchestrator(config)
@@ -118,9 +118,9 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from mfp.runtime.cache import CacheStore  # noqa: PLC0415
-    from mfp.runtime.registry import Registry  # noqa: PLC0415
-    from mfp.server import create_server  # noqa: PLC0415
+    from mce.runtime.cache import CacheStore  # noqa: PLC0415
+    from mce.runtime.registry import Registry  # noqa: PLC0415
+    from mce.server import create_server  # noqa: PLC0415
 
     config = load_config()
     logger = get_logger(__name__)
@@ -141,14 +141,14 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
 
     servers = registry.list_servers()
     logger.info(
-        "mfp_starting",
+        "mce_starting",
         servers=[s.name for s in servers],
         transport=getattr(config_args, "transport", "stdio"),
         host=config.host,
         port=config.port,
     )
 
-    mcp = create_server(config)
+    mcp = create_server(config, registry=registry, cache=cache)
     transport = getattr(config_args, "transport", "stdio")
 
     if transport == "stdio":
@@ -168,7 +168,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    from mfp.compiler.orchestrator import Orchestrator  # noqa: PLC0415
+    from mce.compiler.orchestrator import Orchestrator  # noqa: PLC0415
 
     config = load_config()
     orchestrator = Orchestrator(config)
@@ -182,7 +182,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    """CLI entry point invoked by `mfp` script or `python -m mfp`."""
+    """CLI entry point invoked by `mce` script or `python -m mce`."""
     # Load .env into os.environ early so vault.py can read server credentials.
     # override=False means explicit env vars always win over .env values.
     load_dotenv(str(_ENV_FILE), override=False)

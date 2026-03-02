@@ -6,13 +6,13 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mfp.compiler.orchestrator import Orchestrator
+from mce.compiler.orchestrator import Orchestrator
 
 if TYPE_CHECKING:
-    from mfp.config import MFPConfig
+    from mce.config import MCEConfig
 
 
-async def test_compile_weather_api(tmp_path: Path, mfp_config: MFPConfig) -> None:
+async def test_compile_weather_api(tmp_path: Path, mce_config: MCEConfig) -> None:
     """Full compile pipeline produces valid output for weather fixture."""
     from pathlib import Path  # noqa: PLC0415
 
@@ -39,9 +39,9 @@ async def test_compile_weather_api(tmp_path: Path, mfp_config: MFPConfig) -> Non
         )
     )
 
-    mfp_config.swagger_config_file = str(config_file)
+    mce_config.swagger_config_file = str(config_file)
 
-    orchestrator = Orchestrator(mfp_config)
+    orchestrator = Orchestrator(mce_config)
     result = await orchestrator.compile_all()
 
     assert "weather" in result.compiled
@@ -49,7 +49,7 @@ async def test_compile_weather_api(tmp_path: Path, mfp_config: MFPConfig) -> Non
     assert not result.failed
 
 
-async def test_compile_produces_functions_py(tmp_path: Path, mfp_config: MFPConfig) -> None:
+async def test_compile_produces_functions_py(tmp_path: Path, mce_config: MCEConfig) -> None:
     """Compiled output directory contains functions.py for each server."""
     import yaml  # noqa: PLC0415
 
@@ -70,18 +70,18 @@ async def test_compile_produces_functions_py(tmp_path: Path, mfp_config: MFPConf
             }
         )
     )
-    mfp_config.swagger_config_file = str(config_file)
+    mce_config.swagger_config_file = str(config_file)
 
-    orchestrator = Orchestrator(mfp_config)
+    orchestrator = Orchestrator(mce_config)
     await orchestrator.compile_all()
 
-    functions_file = Path(mfp_config.compiled_output_dir) / "weather" / "functions.py"
+    functions_file = Path(mce_config.compiled_output_dir) / "weather" / "functions.py"
     assert functions_file.exists()
     content = functions_file.read_text()
     assert "def get_current_weather" in content
 
 
-async def test_compile_produces_manifest_json(tmp_path: Path, mfp_config: MFPConfig) -> None:
+async def test_compile_produces_manifest_json(tmp_path: Path, mce_config: MCEConfig) -> None:
     """Compiled output contains valid manifest.json."""
     import yaml  # noqa: PLC0415
 
@@ -102,12 +102,12 @@ async def test_compile_produces_manifest_json(tmp_path: Path, mfp_config: MFPCon
             }
         )
     )
-    mfp_config.swagger_config_file = str(config_file)
+    mce_config.swagger_config_file = str(config_file)
 
-    orchestrator = Orchestrator(mfp_config)
+    orchestrator = Orchestrator(mce_config)
     await orchestrator.compile_all()
 
-    manifest_file = Path(mfp_config.compiled_output_dir) / "weather" / "manifest.json"
+    manifest_file = Path(mce_config.compiled_output_dir) / "weather" / "manifest.json"
     assert manifest_file.exists()
     manifest = json.loads(manifest_file.read_text())
 
@@ -117,7 +117,7 @@ async def test_compile_produces_manifest_json(tmp_path: Path, mfp_config: MFPCon
     assert len(manifest["endpoints"]) > 0
 
 
-async def test_compile_skips_unchanged_server(tmp_path: Path, mfp_config: MFPConfig) -> None:
+async def test_compile_skips_unchanged_server(tmp_path: Path, mce_config: MCEConfig) -> None:
     """Second compile run skips server if swagger hash matches."""
     import yaml  # noqa: PLC0415
 
@@ -138,9 +138,9 @@ async def test_compile_skips_unchanged_server(tmp_path: Path, mfp_config: MFPCon
             }
         )
     )
-    mfp_config.swagger_config_file = str(config_file)
+    mce_config.swagger_config_file = str(config_file)
 
-    orchestrator = Orchestrator(mfp_config)
+    orchestrator = Orchestrator(mce_config)
     result1 = await orchestrator.compile_all()
     assert "weather" in result1.compiled
 
@@ -149,7 +149,7 @@ async def test_compile_skips_unchanged_server(tmp_path: Path, mfp_config: MFPCon
     assert "weather" not in result2.compiled
 
 
-async def test_dry_run_does_not_write_files(tmp_path: Path, mfp_config: MFPConfig) -> None:
+async def test_dry_run_does_not_write_files(tmp_path: Path, mce_config: MCEConfig) -> None:
     """Dry run parses but does not write any output files."""
     import yaml  # noqa: PLC0415
 
@@ -170,10 +170,10 @@ async def test_dry_run_does_not_write_files(tmp_path: Path, mfp_config: MFPConfi
             }
         )
     )
-    mfp_config.swagger_config_file = str(config_file)
+    mce_config.swagger_config_file = str(config_file)
 
-    orchestrator = Orchestrator(mfp_config)
+    orchestrator = Orchestrator(mce_config)
     result = await orchestrator.compile_all(dry_run=True)
 
     assert result.total_endpoints > 0
-    assert not (Path(mfp_config.compiled_output_dir) / "weather" / "functions.py").exists()
+    assert not (Path(mce_config.compiled_output_dir) / "weather" / "functions.py").exists()

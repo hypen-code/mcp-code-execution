@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from mfp.compiler.swagger_parser import SwaggerParser
-from mfp.errors import SwaggerFetchError
-from mfp.models import ServerSpec, SwaggerSource
+from mce.compiler.swagger_parser import SwaggerParser
+from mce.errors import SwaggerFetchError
+from mce.models import ServerSpec, SwaggerSource
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 

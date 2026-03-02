@@ -1,4 +1,4 @@
-# MFP Roadmap
+# MCE Roadmap
 
 Post-v1 enhancements. These are intentionally NOT built in the initial release.
 
@@ -8,7 +8,7 @@ Post-v1 enhancements. These are intentionally NOT built in the initial release.
 2. **Multi-container orchestration** — Run multiple code steps in parallel containers
 3. **WebSocket streaming** — Stream long-running execution results to the LLM in real-time
 4. **Function composition DSL** — Visual function chaining editor for complex workflows
-5. **Shared cache** — Redis-backed distributed cache for multi-instance MFP deployments
+5. **Shared cache** — Redis-backed distributed cache for multi-instance MCE deployments
 6. **OAuth2 flow support** — Interactive authentication for APIs requiring user consent
 7. **Plugin system** — Custom pre/post processors for API request/response transformation
 8. **Telemetry dashboard** — Execution metrics, cache hit rates, most popular functions
