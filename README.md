@@ -105,7 +105,7 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 ```json
 {
   "mcpServers": {
-    "mce": {
+    "mcp-code-execution": {
       "command": "~/mcp-code-execution/.venv/bin/mce",
       "args": ["serve"],
       "env": {
