@@ -1,4 +1,4 @@
-"""Optional LLM-enhanced code improvement using Anthropic Claude."""
+"""Optional LLM-enhanced code improvement using LiteLLM (supports OpenAI, Gemini, Anthropic, OpenRouter, etc.)."""
 
 from __future__ import annotations
 
@@ -25,11 +25,20 @@ CODE:
 
 
 async def enhance_with_llm(code: str, server_name: str, config: MFPConfig) -> str:
-    """Optionally improve generated code using an LLM.
+    """Optionally improve generated code using any LLM supported by LiteLLM.
 
-    This is an optional enhancement step that passes generated code through
-    Claude to improve docstrings and type annotations. The functional behavior
-    is never changed.
+    Uses `litellm.completion()` under the hood, which supports OpenAI, Gemini,
+    Anthropic, OpenRouter, Azure, Cohere, and many other providers through a
+    unified interface.  The model string in ``MFP_LLM_MODEL`` must follow
+    LiteLLM's naming convention, e.g.:
+
+    * OpenAI         → ``openai/gpt-4o``
+    * Anthropic      → ``anthropic/claude-3-5-sonnet-20241022``
+    * Google Gemini  → ``gemini/gemini-2.0-flash``
+    * OpenRouter     → ``openrouter/mistralai/mistral-7b-instruct``
+
+    ``MFP_LLM_API_KEY`` is forwarded as-is; for OpenRouter set it to your
+    ``sk-or-*`` key.
 
     Args:
         code: Generated Python source code.
@@ -40,26 +49,37 @@ async def enhance_with_llm(code: str, server_name: str, config: MFPConfig) -> st
         Improved Python source code, or original code on failure.
 
     Raises:
-        CompileError: If LLM enhancement is requested but API key is missing.
+        CompileError: If LLM enhancement is requested but API key is missing,
+            or if the ``litellm`` package is not installed.
     """
     if not config.llm_api_key:
         raise CompileError("LLM enhancement requires MFP_LLM_API_KEY to be set")
 
     try:
-        import anthropic  # noqa: PLC0415
+        import litellm  # noqa: PLC0415
 
-        client = anthropic.Anthropic(api_key=config.llm_api_key)
-        message = client.messages.create(
+        # litellm picks up the key via its own env-var logic, but we also
+        # pass it explicitly so it works regardless of env-var naming.
+        response = litellm.completion(
             model=config.llm_model,
-            max_tokens=8192,
+            api_key=config.llm_api_key,
             messages=[{"role": "user", "content": _ENHANCE_PROMPT.format(code=code)}],
+            max_tokens=8192,
         )
-        enhanced = str(message.content[0].text).strip()  # type: ignore[union-attr]
-        logger.info("llm_enhanced", server=server_name, original_size=len(code), enhanced_size=len(enhanced))
+        enhanced: str = response.choices[0].message.content.strip()  # type: ignore[union-attr]
+        logger.info(
+            "llm_enhanced",
+            server=server_name,
+            model=config.llm_model,
+            original_size=len(code),
+            enhanced_size=len(enhanced),
+        )
         return enhanced
 
     except ImportError as exc:
-        raise CompileError("anthropic package required for LLM enhancement: pip install mfp[llm]") from exc
+        raise CompileError(
+            "litellm package required for LLM enhancement: pip install mfp[llm]"
+        ) from exc
     except Exception as exc:  # noqa: BLE001
-        logger.warning("llm_enhance_failed", server=server_name, error=str(exc))
+        logger.warning("llm_enhance_failed", server=server_name, model=config.llm_model, error=str(exc))
         return code  # Fall back to original generated code

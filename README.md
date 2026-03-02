@@ -70,7 +70,7 @@ pip install -e .
 cp .env.example .env
 # Edit .env with your API credentials
 
-cp config/swaggers.yaml config/my_swaggers.yaml
+cp config/swaggers.yaml.example config/swaggers.yaml
 # Edit to point at your swagger URLs
 ```
 

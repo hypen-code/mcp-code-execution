@@ -87,6 +87,7 @@ logs/
 .env
 .env.local
 .env.*.local
+config/swaggers.yaml
 
 # =============================================================================
 # Docker

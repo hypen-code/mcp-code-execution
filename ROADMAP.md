@@ -14,3 +14,7 @@ Post-v1 enhancements. These are intentionally NOT built in the initial release.
 8. **Telemetry dashboard** — Execution metrics, cache hit rates, most popular functions
 9. **Rate limiting** — Per-tool call rate limiting configurable in FastMCP3
 10. **gRPC support** — Beyond HTTP REST APIs
+
+
+## Improvements
+- swaggers.yaml not included auth header, then treat as pulbic api. no need to include auth headers

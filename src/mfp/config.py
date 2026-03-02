@@ -26,9 +26,12 @@ class MFPConfig(BaseSettings):
     compile_on_startup: bool = True
     compiled_output_dir: str = "./compiled"
     swagger_config_file: str = "./config/swaggers.yaml"
+    # LiteLLM model string — use provider/model format, e.g.:
+    #   openai/gpt-4o  |  anthropic/claude-3-5-sonnet-20241022
+    #   gemini/gemini-2.0-flash  |  openrouter/mistralai/mistral-7b-instruct
     llm_enhance: bool = False
     llm_api_key: str = ""
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "gemini/gemini-2.0-flash"
 
     # Executor
     docker_image: str = "mfp-sandbox:latest"
