@@ -144,6 +144,9 @@ class CodeExecutor:
         except FileNotFoundError:
             logger.warning("ruff_not_found_skipped")
 
+    # Container-side mount point for the compiled server functions
+    _CONTAINER_COMPILED_PATH = "/mfp_compiled"
+
     def _build_execution_code(self, user_code: str, servers_used: list[str]) -> str:
         """Build complete execution payload with sys.path injection.
 
@@ -154,10 +157,9 @@ class CodeExecutor:
         Returns:
             Complete Python code ready for execution in sandbox.
         """
-        compiled_path = str(self._compiled_dir.resolve())
         path_injection = f"""
 import sys as _sys
-_sys.path.insert(0, {compiled_path!r})
+_sys.path.insert(0, {self._CONTAINER_COMPILED_PATH!r})
 """
         return f"{path_injection}\n{user_code}"
 
@@ -182,6 +184,7 @@ _sys.path.insert(0, {compiled_path!r})
         if self._config.docker_host:
             cmd += ["-H", self._config.docker_host]
 
+        compiled_host_path = str(self._compiled_dir.resolve())
         cmd += [
             "run", "--rm", "-i",
             "--network", self._config.network_mode,
@@ -192,6 +195,7 @@ _sys.path.insert(0, {compiled_path!r})
             "--security-opt", "no-new-privileges:true",
             "--read-only",
             "--tmpfs", "/tmp:size=64m,mode=1777",  # noqa: S108
+            "-v", f"{compiled_host_path}:{self._CONTAINER_COMPILED_PATH}:ro",
         ]
         for key, val in env_vars.items():
             cmd += ["-e", f"{key}={val}"]

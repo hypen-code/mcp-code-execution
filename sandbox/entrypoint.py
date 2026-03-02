@@ -22,22 +22,26 @@ def main() -> None:
         print(json.dumps({"success": False, "error": "No code provided"}))
         return
 
-    local_ns: dict = {}
     # Block dangerous builtins — keep __import__ so import statements work.
     # Security is enforced by the Docker container itself (read-only FS,
     # no network outside mfp_network, non-root user, resource limits).
     _blocked = {"open", "exec", "eval", "compile", "input", "breakpoint"}
     safe_builtins = {k: v for k, v in vars(builtins).items() if k not in _blocked}
 
+    # Use a single namespace dict for both globals and locals so that
+    # top-level imports (e.g. `import httpx`) are visible inside defined
+    # functions (e.g. `def main(): ... httpx.get(...)`).
+    namespace: dict = {"__builtins__": safe_builtins}
+
     try:
         compiled_code = compile(code, "<mfp>", "exec")
-        exec(compiled_code, {"__builtins__": safe_builtins}, local_ns)  # noqa: S102
+        exec(compiled_code, namespace)  # noqa: S102
 
         # Convention: code must define main() or result
-        if "main" in local_ns and callable(local_ns["main"]):
-            output = local_ns["main"]()
-        elif "result" in local_ns:
-            output = local_ns["result"]
+        if "main" in namespace and callable(namespace["main"]):
+            output = namespace["main"]()
+        elif "result" in namespace:
+            output = namespace["result"]
         else:
             print(json.dumps({"success": False, "error": "Code must define 'result' variable or 'main()' function"}))
             return

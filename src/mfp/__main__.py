@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import sys
 
-from mfp.config import load_config
+from dotenv import load_dotenv
+
+from mfp.config import _ENV_FILE, load_config
 from mfp.utils.logging import get_logger, setup_logging
 
 
@@ -181,6 +183,10 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """CLI entry point invoked by `mfp` script or `python -m mfp`."""
+    # Load .env into os.environ early so vault.py can read server credentials.
+    # override=False means explicit env vars always win over .env values.
+    load_dotenv(str(_ENV_FILE), override=False)
+
     parser = _build_parser()
     args = parser.parse_args()
 
