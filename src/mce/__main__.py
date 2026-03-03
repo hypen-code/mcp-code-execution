@@ -20,7 +20,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="mce",
-        description="MCE — ModelFunctionProtocol: Turn any Swagger into LLM-native functions",
+        description="MCE — MCP Code Execution: Turn any Swagger into LLM-native functions",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
