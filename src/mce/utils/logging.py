@@ -68,4 +68,4 @@ def get_logger(name: str) -> structlog.BoundLogger:
     Returns:
         Bound structlog logger instance.
     """
-    return cast(structlog.BoundLogger, structlog.get_logger(name))
+    return cast("structlog.BoundLogger", structlog.get_logger(name))

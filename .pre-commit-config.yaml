@@ -1,7 +1,7 @@
 repos:
   # --- Ruff: lint + format --------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.15.2
     hooks:
       - id: ruff
         args: [--fix]
@@ -31,6 +31,13 @@ repos:
         name: pytest (coverage >= 90%)
         language: system
         entry: bash -c 'pytest --cov=mce --cov-report=term-missing --cov-fail-under=90 -q'
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: ruff-tc006
+        name: ruff (TC006 – quote cast() type expressions)
+        language: system
+        entry: bash -c 'ruff check --select TC006 src/'
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
