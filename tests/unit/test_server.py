@@ -157,10 +157,57 @@ async def test_get_function_returns_function_details(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", server_name="weather", function_name="get_current_weather")
-    assert result["function"] == "get_current_weather"
-    assert result["method"] == "GET"
-    assert "import_statement" in result
+    result = await _call_tool(
+        mcp,
+        "get_function",
+        functions=[{"server_name": "weather", "function_name": "get_current_weather"}],
+    )
+    assert "functions" in result
+    fn = result["functions"][0]
+    assert fn["function"] == "get_current_weather"
+    assert fn["method"] == "GET"
+    assert "import_statement" in fn
+
+
+async def test_get_function_batch_two_functions(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = await _call_tool(
+        mcp,
+        "get_function",
+        functions=[
+            {"server_name": "weather", "function_name": "get_current_weather"},
+            {"server_name": "weather", "function_name": "get_current_weather"},
+        ],
+    )
+    assert len(result["functions"]) == 2
+
+
+async def test_get_function_rejects_more_than_five(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = await _call_tool(
+        mcp,
+        "get_function",
+        functions=[{"server_name": "weather", "function_name": "f"}] * 6,
+    )
+    assert result["error_type"] == "validation"
+
+
+async def test_get_function_rejects_empty_list(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = await _call_tool(mcp, "get_function", functions=[])
+    assert result["error_type"] == "validation"
 
 
 async def test_get_function_server_not_found(tmp_path: Path) -> None:
@@ -170,8 +217,8 @@ async def test_get_function_server_not_found(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", server_name="ghost", function_name="fn")
-    assert result["error_type"] == "server_not_found"
+    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "ghost", "function_name": "fn"}])
+    assert result["functions"][0]["error_type"] == "server_not_found"
 
 
 async def test_get_function_function_not_found(tmp_path: Path) -> None:
@@ -181,8 +228,8 @@ async def test_get_function_function_not_found(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", server_name="weather", function_name="ghost")
-    assert result["error_type"] == "function_not_found"
+    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "weather", "function_name": "ghost"}])
+    assert result["functions"][0]["error_type"] == "function_not_found"
 
 
 async def test_get_function_unexpected_error(tmp_path: Path) -> None:
@@ -192,8 +239,8 @@ async def test_get_function_unexpected_error(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", server_name="weather", function_name="fn")
-    assert result["error_type"] == "internal"
+    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "weather", "function_name": "fn"}])
+    assert result["functions"][0]["error_type"] == "internal"
 
 
 # ---------------------------------------------------------------------------

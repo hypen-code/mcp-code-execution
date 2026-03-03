@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from mce.compiler.orchestrator import CompileResult, Orchestrator
+from mce.compiler.orchestrator import CompileResult, Orchestrator, _to_module_name
 from mce.config import MCEConfig
 from mce.errors import CompileError
 
@@ -36,6 +36,31 @@ def _write_swagger_yaml(tmp_path: Path, sources: list[dict[str, Any]]) -> Path:
     with open(config_path, "w") as f:
         yaml.dump({"servers": sources}, f)
     return config_path
+
+
+# ---------------------------------------------------------------------------
+# _to_module_name()
+# ---------------------------------------------------------------------------
+
+
+def test_to_module_name_simple() -> None:
+    assert _to_module_name("weather") == "weather"
+
+
+def test_to_module_name_spaces_and_hyphens() -> None:
+    assert _to_module_name("Open-Meteo Weather API") == "open_meteo_weather_api"
+
+
+def test_to_module_name_lowercases() -> None:
+    assert _to_module_name("MyAPI") == "myapi"
+
+
+def test_to_module_name_collapses_underscores() -> None:
+    assert _to_module_name("foo--bar") == "foo_bar"
+
+
+def test_to_module_name_leading_digit() -> None:
+    assert _to_module_name("1api") == "m_1api"
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +321,28 @@ async def test_compile_all_skips_up_to_date(tmp_path: Path) -> None:
 
     assert "weather" in result.skipped
     assert "weather" not in result.compiled
+
+
+async def test_compile_all_uses_sanitized_directory_name(tmp_path: Path) -> None:
+    """Server names with spaces/hyphens must produce valid Python module directories."""
+    servers = [
+        {
+            "name": "My Weather API",
+            "swagger_url": str(FIXTURES_DIR / "weather_api.yaml"),
+            "base_url": "https://api.weather.example.com/v1",
+        }
+    ]
+    _write_swagger_yaml(tmp_path, servers)
+    config = _make_config(tmp_path, str(tmp_path / "swaggers.yaml"))
+    orchestrator = Orchestrator(config)
+
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")):
+        result = await orchestrator.compile_all()
+
+    assert "My Weather API" in result.compiled
+    # Directory must be the sanitized module name, not the raw server name
+    assert (tmp_path / "compiled" / "my_weather_api" / "functions.py").exists()
+    assert not (tmp_path / "compiled" / "My Weather API").exists()
 
 
 async def test_compile_all_records_failed_source(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,22 @@ if TYPE_CHECKING:
     from mce.config import MCEConfig
 
 logger = get_logger(__name__)
+
+
+def _to_module_name(name: str) -> str:
+    """Convert a server name to a valid Python module identifier.
+
+    Args:
+        name: Human-readable server name (e.g. "Open-Meteo Weather API").
+
+    Returns:
+        Valid Python identifier usable as a module/directory name (e.g. "open_meteo_weather_api").
+    """
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_").lower()
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"m_{sanitized}"
+    return sanitized or "module"
 
 
 class CompileResult:
@@ -131,7 +148,8 @@ class Orchestrator:
         Raises:
             CompileError: On parsing or generation failure.
         """
-        server_dir = self._output_dir / source.name
+        module_name = _to_module_name(source.name)
+        server_dir = self._output_dir / module_name
         manifest_path = server_dir / "manifest.json"
 
         # Parse the swagger document
@@ -217,7 +235,7 @@ class Orchestrator:
         ]
 
         manifest = ServerManifest(
-            server_name=spec.name,
+            server_name=server_dir.name,
             description=spec.description,
             swagger_hash=spec.swagger_hash,
             compiled_at=datetime.now(tz=UTC).isoformat(),

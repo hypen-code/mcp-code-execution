@@ -59,6 +59,49 @@ def create_server(
         cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
     executor = CodeExecutor(config, cache)
 
+    @mcp.resource(
+        "mce://usage-guide",
+        name="MCE Usage Guide",
+        description="Mandatory rules and workflow for using MCE tools correctly.",
+        mime_type="text/plain",
+    )
+    def usage_guide() -> str:
+        """Return the MCE usage guide with mandatory rules for the LLM."""
+        return """\
+# MCE — MCP Code Execution: Usage Guide
+
+## MANDATORY RULE
+**You MUST call `get_function` before using any server function in code.**
+Never write `from <server>.functions import <fn>` without first calling
+`get_function` for that function in the same session. Skipping this step
+will produce incorrect or broken code because you will not know the exact
+parameter names, types, or return structure.
+
+## Workflow (follow in order)
+
+1. **`list_servers`** — Discover available API servers and their function names.
+   Call this once at the start to see what is available.
+
+2. **`get_function`** — Fetch the signature, parameters, and return schema for
+   1–5 functions at once. You MUST do this before writing any code that calls
+   those functions. The response includes a ready-to-use `import_statement`.
+
+3. **`execute_code`** — Run Python code in a sandboxed Docker container.
+   - Use the exact `import_statement` from `get_function`.
+   - Code must define a `main()` function OR set a `result` variable.
+   - Only use parameters and fields you confirmed via `get_function`.
+
+4. **`get_cached_code`** / **`run_cached_code`** — Find and re-run previously
+   successful executions. Use this to avoid repeating work.
+
+## Rules
+
+- NEVER guess function signatures. Always call `get_function` first.
+- NEVER import a server module without the `import_statement` from `get_function`.
+- Keep `execute_code` payloads minimal — extract only the fields you need.
+- If execution fails, re-read the `get_function` output before retrying.
+"""
+
     @mcp.tool()
     async def list_servers() -> dict[str, Any]:
         """List all available API servers and their functions.
@@ -87,37 +130,73 @@ def create_server(
             return {"error": "Internal error loading servers", "detail": str(exc)}
 
     @mcp.tool()
-    async def get_function(server_name: str, function_name: str) -> dict[str, Any]:
-        """Get detailed function signature and return schema.
+    async def get_function(functions: list[dict[str, str]]) -> dict[str, Any]:
+        """Get detailed function signatures and return schemas for 1–5 functions at once.
 
         Args:
-            server_name: Name of the server (from list_servers).
-            function_name: Name of the function to inspect.
+            functions: List of 1–5 items, each with:
+                - server_name: Name of the server (from list_servers).
+                - function_name: Name of the function to inspect.
 
-        Returns the function's parameters, types, and response data structure
-        so you can write Python code that calls it correctly.
+        Returns each function's parameters, types, and response data structure
+        so you can write Python code that calls them correctly.
+        Requesting more than 5 functions at once returns a validation error.
         """
-        try:
-            fn = registry.get_function(server_name, function_name)
-            logger.info("tool_get_function_called", server=server_name, function=function_name)
-            return {
-                "server": server_name,
-                "function": fn.function_name,
-                "summary": fn.summary,
-                "method": fn.method,
-                "path": fn.path,
-                "parameters": [p.model_dump() for p in fn.parameters],
-                "response_fields": [r.model_dump() for r in fn.response_fields],
-                "usage_example": fn.source_code,
-                "import_statement": f"from {server_name}.functions import {function_name}",
-            }
-        except ServerNotFoundError as exc:
-            return {"error": str(exc), "error_type": "server_not_found"}
-        except FunctionNotFoundError as exc:
-            return {"error": str(exc), "error_type": "function_not_found"}
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("get_function_unexpected_error")
-            return {"error": "Internal error", "error_type": "internal", "detail": str(exc)}
+        if not functions:
+            return {"error": "Provide at least 1 function.", "error_type": "validation"}
+        if len(functions) > 5:
+            return {"error": "At most 5 functions can be requested at once.", "error_type": "validation"}
+
+        results = []
+        for item in functions:
+            server_name = item.get("server_name", "")
+            function_name = item.get("function_name", "")
+            try:
+                fn = registry.get_function(server_name, function_name)
+                logger.info("tool_get_function_called", server=server_name, function=function_name)
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": fn.function_name,
+                        "summary": fn.summary,
+                        "method": fn.method,
+                        "path": fn.path,
+                        "parameters": [p.model_dump() for p in fn.parameters],
+                        "response_fields": [r.model_dump() for r in fn.response_fields],
+                        "usage_example": fn.source_code,
+                        "import_statement": f"from {server_name}.functions import {function_name}",
+                    }
+                )
+            except ServerNotFoundError as exc:
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": str(exc),
+                        "error_type": "server_not_found",
+                    }
+                )
+            except FunctionNotFoundError as exc:
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": str(exc),
+                        "error_type": "function_not_found",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("get_function_unexpected_error")
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": "Internal error",
+                        "error_type": "internal",
+                        "detail": str(exc),
+                    }
+                )
+        return {"functions": results}
 
     @mcp.tool()
     async def execute_code(code: str, description: str) -> dict[str, Any]:

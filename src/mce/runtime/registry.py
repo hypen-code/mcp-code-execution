@@ -61,8 +61,11 @@ class Registry:
             raw = json.load(f)
 
         manifest = ServerManifest(**raw)
-        self._servers[manifest.server_name] = manifest
-        logger.debug("manifest_loaded", server=manifest.server_name, endpoints=len(manifest.endpoints))
+        # Index by directory name (valid Python identifier) so imports like
+        # `from open_meteo_weather_api.functions import …` resolve correctly.
+        module_name = manifest_path.parent.name
+        self._servers[module_name] = manifest
+        logger.debug("manifest_loaded", server=module_name, endpoints=len(manifest.endpoints))
 
     def list_servers(self) -> list[ServerInfo]:
         """Return summary information about all compiled servers.
