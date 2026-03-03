@@ -207,6 +207,7 @@ parameter names, types, or return structure.
             code: Valid Python code to execute. Must be self-contained.
             description: Brief description of what this code does (used for caching).
 
+        Run multiple functions in single code block and return result.
         Returns execution result with data or error details.
         Keep responses minimal — extract only the fields you need.
         """
