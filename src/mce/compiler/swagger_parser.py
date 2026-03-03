@@ -105,7 +105,7 @@ class SwaggerParser:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, follow_redirects=True)
                 response.raise_for_status()
-                return response.text  # type: ignore[no-any-return]
+                return response.text
         except httpx.HTTPError as exc:
             raise SwaggerFetchError(f"Failed to fetch swagger from {url}: {exc}") from exc
 

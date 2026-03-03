@@ -12,10 +12,17 @@ repos:
     rev: v1.10.0
     hooks:
       - id: mypy
-        args: [--strict]
+        args:
+          - --strict
+          - --config-file=pyproject.toml
         additional_dependencies:
           - pydantic>=2.0
           - pydantic-settings>=2.0
+          - httpx>=0.28.0
+          - aiosqlite>=0.20.0
+          - anyio>=4.0.0
+          - structlog>=24.0.0
+          - types-PyYAML>=6.0
 
   # --- Pytest with mandatory coverage >= 90% --------------------------------
   - repo: local

@@ -242,7 +242,7 @@ class CacheStore:
 
             if count:
                 logger.info("cache_invalidated", swagger_hash=swagger_hash[:12], count=count)
-            return count  # type: ignore[no-any-return]
+            return count
 
         except aiosqlite.Error as exc:
             raise CacheError(f"Failed to invalidate cache entries: {exc}") from exc
@@ -264,7 +264,7 @@ class CacheStore:
                 count = cursor.rowcount
 
             logger.debug("cache_expired_cleaned", count=count)
-            return count  # type: ignore[no-any-return]
+            return count
 
         except aiosqlite.Error as exc:
             raise CacheError(f"Failed to clean expired entries: {exc}") from exc

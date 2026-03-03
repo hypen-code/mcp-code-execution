@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from mce.compiler.llm_enhancer import enhance_with_llm
 from mce.config import MCEConfig
 from mce.errors import CompileError

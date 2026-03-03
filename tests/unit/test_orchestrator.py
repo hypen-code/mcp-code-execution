@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+
 from mce.compiler.orchestrator import CompileResult, Orchestrator
 from mce.config import MCEConfig
 from mce.errors import CompileError

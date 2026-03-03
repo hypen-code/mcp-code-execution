@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 import pytest
+
 from mce.config import MCEConfig
 from mce.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
 from mce.runtime.executor import CodeExecutor, _detect_servers_used

@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 import pytest
+
 from mce.__main__ import _build_parser, _cmd_compile, _cmd_run, _cmd_serve, main
 
 # ---------------------------------------------------------------------------

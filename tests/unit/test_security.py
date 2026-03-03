@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from mce.errors import SecurityViolationError
 from mce.security.policies import check_domain_allowed, enforce_read_only
 from mce.security.vault import build_all_server_env_vars, build_server_env_vars, resolve_env_references

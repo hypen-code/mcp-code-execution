@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 import pytest
+
 from mce.errors import FunctionNotFoundError, ServerNotFoundError
 from mce.models import EndpointManifest, ServerManifest
 from mce.runtime.registry import Registry

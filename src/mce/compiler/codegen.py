@@ -204,7 +204,7 @@ class CodeGenerator:
         functions_data = [self._prepare_function_data(ep) for ep in spec.endpoints]
 
         try:
-            code = template.render(
+            code: str = template.render(
                 server_name=spec.name,
                 description=spec.description,
                 base_url=spec.base_url,
@@ -220,7 +220,7 @@ class CodeGenerator:
             functions=len(functions_data),
             code_size=len(code),
         )
-        return code  # type: ignore[no-any-return]
+        return code
 
     def _prepare_function_data(self, endpoint: EndpointSpec) -> dict[str, Any]:
         """Prepare template context data for a single endpoint.
