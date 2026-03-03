@@ -43,31 +43,7 @@ def create_server(
     """
     mcp: FastMCP = FastMCP(
         name="MCE — MCP Code Execution",
-        instructions=(
-            "MCE allows you to discover, inspect, and execute API server functions "
-            "through 4 meta-tools. Workflow: 1) list_servers to see what's available, "
-            "2) get_function to get function signature and examples, "
-            "3) execute_code to run Python code using those functions, "
-            "4) get_cached_code to find and reuse previously successful code."
-        ),
-    )
-
-    if registry is None:
-        registry = Registry(config.compiled_output_dir)
-        registry.load()
-    if cache is None:
-        cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
-    executor = CodeExecutor(config, cache)
-
-    @mcp.resource(
-        "mce://usage-guide",
-        name="MCE Usage Guide",
-        description="Mandatory rules and workflow for using MCE tools correctly.",
-        mime_type="text/plain",
-    )
-    def usage_guide() -> str:
-        """Return the MCE usage guide with mandatory rules for the LLM."""
-        return """\
+        instructions="""\
 # MCE — MCP Code Execution: Usage Guide
 
 ## MANDATORY RULE
@@ -100,7 +76,15 @@ parameter names, types, or return structure.
 - NEVER import a server module without the `import_statement` from `get_function`.
 - Keep `execute_code` payloads minimal — extract only the fields you need.
 - If execution fails, re-read the `get_function` output before retrying.
-"""
+""",
+    )
+
+    if registry is None:
+        registry = Registry(config.compiled_output_dir)
+        registry.load()
+    if cache is None:
+        cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
+    executor = CodeExecutor(config, cache)
 
     @mcp.tool()
     async def list_servers() -> dict[str, Any]:
