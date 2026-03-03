@@ -220,7 +220,7 @@ class CodeGenerator:
             functions=len(functions_data),
             code_size=len(code),
         )
-        return code
+        return code  # type: ignore[no-any-return]
 
     def _prepare_function_data(self, endpoint: EndpointSpec) -> dict[str, Any]:
         """Prepare template context data for a single endpoint.

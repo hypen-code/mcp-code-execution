@@ -51,7 +51,7 @@ build-backend = "hatchling.build"
 packages = ["src/mce"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
@@ -65,8 +65,29 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = "litellm"
+module = [
+    "litellm",
+    "structlog",
+    "structlog.*",
+    "httpx",
+    "httpx.*",
+    "yaml",
+    "aiosqlite",
+    "aiosqlite.*",
+    "jinja2",
+    "jinja2.*",
+    "fastmcp",
+    "fastmcp.*",
+    "pytest",
+    "pytest.*",
+    "_pytest",
+    "_pytest.*",
+]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mce.server"
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

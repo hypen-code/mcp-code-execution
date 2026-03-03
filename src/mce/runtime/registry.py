@@ -245,17 +245,19 @@ class Registry:
         Returns:
             List of ParamSchema objects.
         """
+        import re  # noqa: PLC0415
+
         if not summary.strip():
             return []
 
         params: list[ParamSchema] = []
-        for part in summary.split(","):
+        for part in re.split(r"\),\s*", summary.rstrip(")")):
             part = part.strip()  # noqa: PLW2901
             if not part:
                 continue
             try:
                 name, rest = part.split("(", 1)
-                type_str, req_str = rest.rstrip(")").split(",")
+                type_str, req_str = rest.split(",", 1)
                 params.append(
                     ParamSchema(
                         name=name.strip(),
