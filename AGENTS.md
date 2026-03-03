@@ -1,7 +1,7 @@
 # AGENTS.md — MCE Development Guide for AI Agents
 
 > This file governs how AI agents develop, maintain, and extend the MCE
-> (ModelFunctionProtocol) codebase. Read it in full before making any change.
+> (MCP Code Execution) codebase. Read it in full before making any change.
 
 ---
 

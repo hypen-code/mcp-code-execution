@@ -1,4 +1,4 @@
-# MCE — ModelFunctionProtocol
+# MCE — MCP Code Execution
 
 > **APIs were designed for developers. MCE recompiles them for AI.**
 
