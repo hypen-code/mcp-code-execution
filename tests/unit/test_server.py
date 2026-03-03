@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from toon_format import decode as _toon_decode_raw
 
 from mce.config import MCEConfig
 from mce.errors import (
@@ -22,6 +21,16 @@ from mce.models import CacheSummary, ExecutionResult
 from mce.runtime.cache import CacheStore
 from mce.runtime.registry import Registry
 from mce.server import create_server, initialize_server
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _toon_decode(s: str) -> dict[str, Any]:
+    result = _toon_decode_raw(s)
+    assert isinstance(result, dict)
+    return result
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -118,7 +127,7 @@ async def test_list_servers_returns_server_info(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "list_servers")
+    result = _toon_decode(await _call_tool(mcp, "list_servers"))
     assert "servers" in result
     assert len(result["servers"]) == 1
     assert result["servers"][0]["name"] == "weather"
@@ -130,7 +139,7 @@ async def test_list_servers_returns_function_list(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "list_servers")
+    result = _toon_decode(await _call_tool(mcp, "list_servers"))
     functions = result["servers"][0]["functions"]
     assert any(f["name"] == "get_current_weather" for f in functions)
 
@@ -142,25 +151,27 @@ async def test_list_servers_handles_exception(tmp_path: Path) -> None:
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "list_servers")
+    result = _toon_decode(await _call_tool(mcp, "list_servers"))
     assert "error" in result
 
 
 # ---------------------------------------------------------------------------
-# get_function tool
+# get_functions tool
 # ---------------------------------------------------------------------------
 
 
-async def test_get_function_returns_function_details(tmp_path: Path) -> None:
+async def test_get_functions_returns_function_details(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(
-        mcp,
-        "get_function",
-        functions=[{"server_name": "weather", "function_name": "get_current_weather"}],
+    result = _toon_decode(
+        await _call_tool(
+            mcp,
+            "get_functions",
+            functions=[{"server_name": "weather", "function_name": "get_current_weather"}],
+        )
     )
     assert "functions" in result
     fn = result["functions"][0]
@@ -169,77 +180,87 @@ async def test_get_function_returns_function_details(tmp_path: Path) -> None:
     assert "import_statement" in fn
 
 
-async def test_get_function_batch_two_functions(tmp_path: Path) -> None:
+async def test_get_functions_batch_two_functions(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(
-        mcp,
-        "get_function",
-        functions=[
-            {"server_name": "weather", "function_name": "get_current_weather"},
-            {"server_name": "weather", "function_name": "get_current_weather"},
-        ],
+    result = _toon_decode(
+        await _call_tool(
+            mcp,
+            "get_functions",
+            functions=[
+                {"server_name": "weather", "function_name": "get_current_weather"},
+                {"server_name": "weather", "function_name": "get_current_weather"},
+            ],
+        )
     )
     assert len(result["functions"]) == 2
 
 
-async def test_get_function_rejects_more_than_five(tmp_path: Path) -> None:
+async def test_get_functions_rejects_more_than_five(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(
-        mcp,
-        "get_function",
-        functions=[{"server_name": "weather", "function_name": "f"}] * 6,
+    result = _toon_decode(
+        await _call_tool(
+            mcp,
+            "get_functions",
+            functions=[{"server_name": "weather", "function_name": "f"}] * 6,
+        )
     )
     assert result["error_type"] == "validation"
 
 
-async def test_get_function_rejects_empty_list(tmp_path: Path) -> None:
+async def test_get_functions_rejects_empty_list(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", functions=[])
+    result = _toon_decode(await _call_tool(mcp, "get_functions", functions=[]))
     assert result["error_type"] == "validation"
 
 
-async def test_get_function_server_not_found(tmp_path: Path) -> None:
+async def test_get_functions_server_not_found(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     registry.get_function.side_effect = ServerNotFoundError("not found")
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "ghost", "function_name": "fn"}])
+    result = _toon_decode(
+        await _call_tool(mcp, "get_functions", functions=[{"server_name": "ghost", "function_name": "fn"}])
+    )
     assert result["functions"][0]["error_type"] == "server_not_found"
 
 
-async def test_get_function_function_not_found(tmp_path: Path) -> None:
+async def test_get_functions_function_not_found(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     registry.get_function.side_effect = FunctionNotFoundError("fn not found")
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "weather", "function_name": "ghost"}])
+    result = _toon_decode(
+        await _call_tool(mcp, "get_functions", functions=[{"server_name": "weather", "function_name": "ghost"}])
+    )
     assert result["functions"][0]["error_type"] == "function_not_found"
 
 
-async def test_get_function_unexpected_error(tmp_path: Path) -> None:
+async def test_get_functions_unexpected_error(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     registry.get_function.side_effect = RuntimeError("unexpected")
     cache = _make_mock_cache()
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_function", functions=[{"server_name": "weather", "function_name": "fn"}])
+    result = _toon_decode(
+        await _call_tool(mcp, "get_functions", functions=[{"server_name": "weather", "function_name": "fn"}])
+    )
     assert result["functions"][0]["error_type"] == "internal"
 
 
@@ -368,7 +389,7 @@ async def test_get_cached_code_returns_entries(tmp_path: Path) -> None:
     )
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_cached_code", search=None)
+    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
     assert "cached_entries" in result
     assert len(result["cached_entries"]) == 1
     assert result["cached_entries"][0]["id"] == "abc123"
@@ -381,7 +402,7 @@ async def test_get_cached_code_with_search_term(tmp_path: Path) -> None:
     cache.search = AsyncMock(return_value=[])
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_cached_code", search="hotel")
+    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search="hotel"))
     cache.search.assert_awaited_once_with("hotel")
     assert result["cached_entries"] == []
 
@@ -393,7 +414,7 @@ async def test_get_cached_code_cache_error(tmp_path: Path) -> None:
     cache.search = AsyncMock(side_effect=CacheError("DB error"))
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_cached_code", search=None)
+    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
     assert "error" in result
     assert result["error_type"] == "cache"
 
@@ -405,7 +426,7 @@ async def test_get_cached_code_unexpected_error(tmp_path: Path) -> None:
     cache.search = AsyncMock(side_effect=RuntimeError("unexpected"))
     mcp = create_server(config, registry=registry, cache=cache)
 
-    result = await _call_tool(mcp, "get_cached_code", search=None)
+    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
     assert "error" in result
     assert result["error_type"] == "internal"
 

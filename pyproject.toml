@@ -26,6 +26,7 @@ dependencies = [
     "structlog>=24.0.0",
     "aiosqlite>=0.20.0",
     "anyio>=4.0.0",
+    "toon_format @ git+https://github.com/toon-format/toon-python.git",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +73,7 @@ module = [
     "litellm",
     "structlog",
     "structlog.*",
+    "toon_format",
     "httpx",
     "httpx.*",
     "yaml",
