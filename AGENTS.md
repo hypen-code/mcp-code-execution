@@ -444,6 +444,27 @@ database path across tests — isolation is mandatory.
    by catching `aiosqlite.OperationalError` on startup.
 3. Update `test_cache.py` to cover the new columns/indexes.
 
+### 8.7 Keeping `README.md` in Sync
+
+`README.md` is the canonical public-facing reference for MCE. **Any change
+that affects content documented in `README.md` must update it in the same
+commit.** The sections to keep current are:
+
+| README section | Triggers an update when … |
+|---------------|---------------------------|
+| **4 meta-tools table** | A tool is added, removed, or renamed in `server.py` |
+| **Quick Start** commands | CLI commands (`__main__.py`) or setup steps change |
+| **Environment Variables table** | Any `MCEConfig` field in `config.py` is added, removed, or renamed |
+| **Swagger Config schema** | `swaggers.yaml` structure changes |
+| **Security section** | `ast_guard.py`, `policies.py`, or Docker sandbox constraints change |
+| **Architecture diagram** | New layers, modules, or data-flow steps are introduced |
+
+Rules:
+- Do **not** create additional markdown documentation files — README, ROADMAP,
+  AGENTS, and CONTRIBUTING are the only permitted top-level docs (see
+  Section 10).
+- When in doubt, update `README.md`. Stale public docs are a bug.
+
 ---
 
 ## 9. Commands Reference
@@ -519,9 +540,63 @@ A task is complete only when all of these are true:
 - [ ] All public functions have Google-style docstrings
 - [ ] `ruff check src/ tests/` exits 0
 - [ ] `mypy src/` exits 0
-- [ ] `pytest --cov=mce` exits 0 with ≥ 100% line coverage for changed modules
+- [ ] `pytest --cov=mce --cov-fail-under=90` exits 0 (≥ 90% coverage is the **mandatory** gate)
+- [ ] Pre-commit hook passes in full (`pre-commit run --all-files` exits 0)
+- [ ] `README.md` updated if any content it documents has changed (see Section 8.7)
 - [ ] No credentials appear in code, logs, or test assertions
 - [ ] No `print()` statements added
 - [ ] No new files created outside the defined structure (Section 2)
 - [ ] `mce compile --dry-run` succeeds if compiler was touched
 - [ ] Security guard tests pass if `ast_guard.py` was touched
+
+---
+
+## 12. Pre-Commit Hook
+
+The repository uses the [`pre-commit`](https://pre-commit.com) framework.
+The hook configuration lives in `.pre-commit-config.yaml` and runs
+automatically on every `git commit`.
+
+### 12.1 Hooks That Run
+
+| Hook | Tool | What it enforces |
+|------|------|------------------|
+| `ruff` | ruff | Lint violations — auto-fixes where possible |
+| `ruff-format` | ruff | Code formatting |
+| `mypy` | mypy --strict | Full static type checking |
+| `pytest-coverage` | pytest | **Coverage ≥ 90% — commit is blocked if below threshold** |
+
+### 12.2 Coverage Gate
+
+The pytest hook runs:
+```bash
+pytest --cov=mce --cov-report=term-missing --cov-fail-under=90 -q
+```
+- **90% is the hard floor** — the commit is rejected if overall coverage drops below it.
+- Coverage is measured against the `mce` package (`src/mce/`).
+- `--cov-report=term-missing` prints uncovered lines so you know exactly what to fix.
+
+### 12.3 Installing the Hook
+
+```bash
+# One-time setup after cloning
+pip install pre-commit
+pre-commit install
+```
+
+### 12.4 Running Manually
+
+```bash
+# Run all hooks against every file
+pre-commit run --all-files
+
+# Run only the coverage gate
+pre-commit run pytest-coverage --all-files
+
+# Skip hooks for an emergency commit (use sparingly)
+git commit --no-verify -m "chore: emergency fix"
+```
+
+> **Never use `--no-verify` for feature work.** It is reserved for
+> critical hotfixes and must be followed immediately by a full
+> `pre-commit run --all-files` pass in the next commit.

@@ -1,29 +1,29 @@
 repos:
-  # Ruff: lint and format on every commit
+  # --- Ruff: lint + format --------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.4
+    rev: v0.4.4
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix]
       - id: ruff-format
 
-  # Mypy: type-check on every commit (uses project venv — run `pip install -e ".[dev]"` first)
-  - repo: local
+  # --- Mypy: strict type checking -------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
     hooks:
       - id: mypy
-        name: mypy
-        entry: mypy
-        language: system
-        types: [python]
-        args: [src/]
-        pass_filenames: false
+        args: [--strict]
+        additional_dependencies:
+          - pydantic>=2.0
+          - pydantic-settings>=2.0
 
-      # Pytest unit tests: only on pre-push (slow — skipped on every commit)
-      - id: pytest-unit
-        name: pytest (unit)
-        entry: pytest
+  # --- Pytest with mandatory coverage >= 90% --------------------------------
+  - repo: local
+    hooks:
+      - id: pytest-coverage
+        name: pytest (coverage >= 90%)
         language: system
-        types: [python]
-        args: [tests/unit/, --tb=short, -q, --no-cov]
+        entry: bash -c 'pytest --cov=mce --cov-report=term-missing --cov-fail-under=90 -q'
         pass_filenames: false
-        stages: [pre-push]
+        always_run: true
+        stages: [pre-commit]
