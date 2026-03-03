@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
+from toon_format import encode as _toon_encode
 
 from mce.errors import (
     CacheError,
@@ -43,13 +44,40 @@ def create_server(
     """
     mcp: FastMCP = FastMCP(
         name="MCE — MCP Code Execution",
-        instructions=(
-            "MCE allows you to discover, inspect, and execute API server functions "
-            "through 4 meta-tools. Workflow: 1) list_servers to see what's available, "
-            "2) get_function to get function signature and examples, "
-            "3) execute_code to run Python code using those functions, "
-            "4) get_cached_code to find and reuse previously successful code."
-        ),
+        instructions="""\
+# MCE — MCP Code Execution: Usage Guide
+
+## MANDATORY RULE
+**You MUST call `get_functions` before using any server function in code.**
+Never write `from <server>.functions import <fn>` without first calling
+`get_functions` for that function in the same session. Skipping this step
+will produce incorrect or broken code because you will not know the exact
+parameter names, types, or return structure.
+
+## Workflow (follow in order)
+
+1. **`list_servers`** — Discover available API servers and their function names.
+   Call this once at the start to see what is available.
+
+2. **`get_functions`** — Fetch the signature, parameters, and return schema for
+   1–5 functions at once. You MUST do this before writing any code that calls
+   those functions. The response includes a ready-to-use `import_statement`.
+
+3. **`execute_code`** — Run Python code in a sandboxed Docker container.
+   - Use the exact `import_statement` from `get_functions`.
+   - Code must define a `main()` function OR set a `result` variable.
+   - Only use parameters and fields you confirmed via `get_functions`.
+
+4. **`get_cached_code`** / **`run_cached_code`** — Find and re-run previously
+   successful executions. Use this to avoid repeating work.
+
+## Rules
+
+- NEVER guess function signatures. Always call `get_functions` first.
+- NEVER import a server module without the `import_statement` from `get_functions`.
+- Keep `execute_code` payloads minimal — extract only the fields you need.
+- If execution fails, re-read the `get_functions` output before retrying.
+""",
     )
 
     if registry is None:
@@ -60,7 +88,7 @@ def create_server(
     executor = CodeExecutor(config, cache)
 
     @mcp.tool()
-    async def list_servers() -> dict[str, Any]:
+    async def list_servers() -> str:
         """List all available API servers and their functions.
 
         Returns a compact overview of each server with:
@@ -72,52 +100,96 @@ def create_server(
         try:
             servers = registry.list_servers()
             logger.info("tool_list_servers_called", server_count=len(servers))
-            return {
-                "servers": [
+            return str(
+                _toon_encode(
                     {
-                        "name": s.name,
-                        "description": s.description,
-                        "functions": [{"name": fn, "summary": s.function_summaries.get(fn, "")} for fn in s.functions],
+                        "servers": [
+                            {
+                                "name": s.name,
+                                "description": s.description,
+                                "functions": [
+                                    {"name": fn, "summary": s.function_summaries.get(fn, "")} for fn in s.functions
+                                ],
+                            }
+                            for s in servers
+                        ]
                     }
-                    for s in servers
-                ]
-            }
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("list_servers_unexpected_error")
-            return {"error": "Internal error loading servers", "detail": str(exc)}
+            return str(_toon_encode({"error": "Internal error loading servers", "detail": str(exc)}))
 
     @mcp.tool()
-    async def get_function(server_name: str, function_name: str) -> dict[str, Any]:
-        """Get detailed function signature and return schema.
+    async def get_functions(functions: list[dict[str, str]]) -> str:
+        """Get detailed function signatures and return schemas for 1–5 functions at once.
 
         Args:
-            server_name: Name of the server (from list_servers).
-            function_name: Name of the function to inspect.
+            functions: List of 1–5 items, each with:
+                - server_name: Name of the server (from list_servers).
+                - function_name: Name of the function to inspect.
 
-        Returns the function's parameters, types, and response data structure
-        so you can write Python code that calls it correctly.
+        Returns each function's parameters, types, and response data structure
+        so you can write Python code that calls them correctly.
+        Requesting more than 5 functions at once returns a validation error.
         """
-        try:
-            fn = registry.get_function(server_name, function_name)
-            logger.info("tool_get_function_called", server=server_name, function=function_name)
-            return {
-                "server": server_name,
-                "function": fn.function_name,
-                "summary": fn.summary,
-                "method": fn.method,
-                "path": fn.path,
-                "parameters": [p.model_dump() for p in fn.parameters],
-                "response_fields": [r.model_dump() for r in fn.response_fields],
-                "usage_example": fn.source_code,
-                "import_statement": f"from {server_name}.functions import {function_name}",
-            }
-        except ServerNotFoundError as exc:
-            return {"error": str(exc), "error_type": "server_not_found"}
-        except FunctionNotFoundError as exc:
-            return {"error": str(exc), "error_type": "function_not_found"}
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("get_function_unexpected_error")
-            return {"error": "Internal error", "error_type": "internal", "detail": str(exc)}
+        if not functions:
+            return str(_toon_encode({"error": "Provide at least 1 function.", "error_type": "validation"}))
+        if len(functions) > 5:
+            return str(
+                _toon_encode({"error": "At most 5 functions can be requested at once.", "error_type": "validation"})
+            )
+
+        results = []
+        for item in functions:
+            server_name = item.get("server_name", "")
+            function_name = item.get("function_name", "")
+            try:
+                fn = registry.get_function(server_name, function_name)
+                logger.info("tool_get_function_called", server=server_name, function=function_name)
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": fn.function_name,
+                        "summary": fn.summary,
+                        "method": fn.method,
+                        "path": fn.path,
+                        "parameters": [p.model_dump() for p in fn.parameters],
+                        "response_fields": [r.model_dump() for r in fn.response_fields],
+                        "usage_example": fn.source_code,
+                        "import_statement": f"from {server_name}.functions import {function_name}",
+                    }
+                )
+            except ServerNotFoundError as exc:
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": str(exc),
+                        "error_type": "server_not_found",
+                    }
+                )
+            except FunctionNotFoundError as exc:
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": str(exc),
+                        "error_type": "function_not_found",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("get_function_unexpected_error")
+                results.append(
+                    {
+                        "server": server_name,
+                        "function": function_name,
+                        "error": "Internal error",
+                        "error_type": "internal",
+                        "detail": str(exc),
+                    }
+                )
+        return str(_toon_encode({"functions": results}))
 
     @mcp.tool()
     async def execute_code(code: str, description: str) -> dict[str, Any]:
@@ -135,6 +207,7 @@ def create_server(
             code: Valid Python code to execute. Must be self-contained.
             description: Brief description of what this code does (used for caching).
 
+        Run multiple functions in single code block and return result.
         Returns execution result with data or error details.
         Keep responses minimal — extract only the fields you need.
         """
@@ -164,7 +237,7 @@ def create_server(
             return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
 
     @mcp.tool()
-    async def get_cached_code(search: str | None = None) -> dict[str, Any]:
+    async def get_cached_code(search: str | None = None) -> str:
         """List previously executed code that succeeded and is cached for reuse.
 
         Args:
@@ -176,23 +249,27 @@ def create_server(
         try:
             entries = await cache.search(search)
             logger.info("tool_get_cached_code_called", search=search, results=len(entries))
-            return {
-                "cached_entries": [
+            return str(
+                _toon_encode(
                     {
-                        "id": e.id,
-                        "description": e.description,
-                        "servers_used": e.servers_used,
-                        "use_count": e.use_count,
-                        "created_at": e.created_at,
+                        "cached_entries": [
+                            {
+                                "id": e.id,
+                                "description": e.description,
+                                "servers_used": e.servers_used,
+                                "use_count": e.use_count,
+                                "created_at": e.created_at,
+                            }
+                            for e in entries
+                        ]
                     }
-                    for e in entries
-                ]
-            }
+                )
+            )
         except CacheError as exc:
-            return {"error": f"Cache unavailable: {exc}", "error_type": "cache"}
+            return str(_toon_encode({"error": f"Cache unavailable: {exc}", "error_type": "cache"}))
         except Exception:  # noqa: BLE001
             logger.exception("get_cached_code_unexpected_error")
-            return {"error": "Internal error", "error_type": "internal"}
+            return str(_toon_encode({"error": "Internal error", "error_type": "internal"}))
 
     @mcp.tool()
     async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
