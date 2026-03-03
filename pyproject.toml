@@ -51,12 +51,15 @@ build-backend = "hatchling.build"
 packages = ["src/mce"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TC"]
 ignore = ["A002", "A003"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mce"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -65,8 +68,29 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = "litellm"
+module = [
+    "litellm",
+    "structlog",
+    "structlog.*",
+    "httpx",
+    "httpx.*",
+    "yaml",
+    "aiosqlite",
+    "aiosqlite.*",
+    "jinja2",
+    "jinja2.*",
+    "fastmcp",
+    "fastmcp.*",
+    "pytest",
+    "pytest.*",
+    "_pytest",
+    "_pytest.*",
+]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mce.server"
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
