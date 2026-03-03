@@ -2,7 +2,7 @@
 
 > **APIs were designed for developers. MCE recompiles them for AI.**
 
-[![CI](https://github.com/your-org/mce/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/mce/actions)
+[![CI](https://github.com/hypen-code/mcp-code-execution/actions/workflows/ci.yml/badge.svg)](https://github.com/hypen-code/mcp-code-execution/actions)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -14,13 +14,14 @@
 
 ## The Solution
 
-MCE exposes **4 meta-tools** instead of N API-specific tools:
+MCE exposes **5 meta-tools** instead of N API-specific tools:
 
 ```
-list_servers     → discover available APIs
-get_function     → inspect a specific function's signature
+list_servers     → discover available APIs and their functions
+get_function     → inspect a specific function's signature and return schema
 execute_code     → run Python in a sandboxed Docker container
-get_cached_code  → reuse previously successful code
+get_cached_code  → search previously successful code snippets
+run_cached_code  → re-execute a cached snippet, optionally with new parameters
 ```
 
 The LLM workflow: **discover → inspect → generate → execute → cache → reuse**
@@ -41,9 +42,9 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
-│  │           4 MCP Tools (exposed to LLM)         │  │
+│  │           5 MCP Tools (exposed to LLM)         │  │
 │  │  list_servers | get_function | execute_code    │  │
-│  │  get_cached_code                               │  │
+│  │  get_cached_code | run_cached_code             │  │
 │  └───────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
          │                            │
@@ -61,7 +62,10 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 ```bash
 git clone https://github.com/hypen-code/mcp-code-execution.git
 cd mcp-code-execution
-pip install -e .
+pip install -e ".[dev]"
+
+# Optional: LLM-enhanced compilation (OpenAI, Gemini, Anthropic, OpenRouter)
+pip install -e ".[llm]"
 ```
 
 ### 2. Configure
@@ -86,6 +90,12 @@ docker network create mce_network
 ```bash
 mce compile
 # ✅ Compiled: weather, hotel_booking (12 endpoints)
+
+# Optional: enhance docstrings and examples with an LLM
+mce compile --llm-enhance
+
+# Validate without writing output
+mce compile --dry-run
 ```
 
 ### 5. Run the MCP Server
@@ -96,6 +106,9 @@ mce serve
 
 # HTTP mode
 mce serve --transport http --port 8000
+
+# Compile + serve in one command
+mce run
 ```
 
 ### 6. Connect to Your MCP Client
@@ -126,7 +139,7 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 
 ```
 LLM → list_servers()
-← { servers: [{ name: "weather", functions: ["get_current_weather", "get_weather_forecast"] }] }
+← { servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
 
 LLM → get_function("weather", "get_current_weather")
 ← { parameters: [{ name: "city", type: "str", required: true }], usage_example: "..." }
@@ -139,6 +152,9 @@ result = get_current_weather(city="London", units="metric")
 
 LLM → get_cached_code(search="weather")
 ← { cached_entries: [{ id: "abc123", description: "Get London weather", use_count: 1 }] }
+
+LLM → run_cached_code("abc123", params={"city": "Paris"})
+← { success: true, data: { temperature: 18.5, condition: "Sunny" }, cache_id: "def456" }
 ```
 
 ## Configuration
@@ -148,13 +164,28 @@ LLM → get_cached_code(search="weather")
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCE_LOG_LEVEL` | `INFO` | Log verbosity |
+| `MCE_DEBUG` | `false` | Enable debug mode |
+| `MCE_HOST` | `0.0.0.0` | HTTP server bind host |
+| `MCE_PORT` | `8000` | HTTP server port |
+| `MCE_COMPILE_ON_STARTUP` | `true` | Auto-compile swagger sources at startup |
+| `MCE_COMPILED_OUTPUT_DIR` | `./compiled` | Compiled functions directory |
+| `MCE_SWAGGER_CONFIG_FILE` | `./config/swaggers.yaml` | Swagger source definitions |
+| `MCE_LLM_ENHANCE` | `false` | Enable LLM docstring enhancement at compile time |
+| `MCE_LLM_MODEL` | `gemini/gemini-2.0-flash` | LiteLLM model string (`provider/model`) |
+| `MCE_LLM_API_KEY` | — | API key for the LLM provider |
 | `MCE_DOCKER_IMAGE` | `mce-sandbox:latest` | Sandbox image name |
+| `MCE_DOCKER_HOST` | — | Docker host socket (e.g. `unix:///var/run/docker.sock`) |
 | `MCE_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
+| `MCE_MAX_OUTPUT_SIZE_BYTES` | `1048576` | Max sandbox stdout size (1 MB) |
+| `MCE_NETWORK_MODE` | `mce_network` | Docker network for sandbox containers |
 | `MCE_CACHE_ENABLED` | `true` | Enable code caching |
 | `MCE_CACHE_TTL_SECONDS` | `3600` | Cache entry lifetime |
-| `MCE_COMPILED_OUTPUT_DIR` | `./compiled` | Compiled functions directory |
+| `MCE_CACHE_MAX_ENTRIES` | `500` | Maximum cached entries before LRU eviction |
+| `MCE_CACHE_DB_PATH` | `./data/cache.db` | SQLite cache database path |
+| `MCE_MAX_CODE_SIZE_BYTES` | `65536` | Maximum allowed code size (64 KB) |
+| `MCE_ALLOWED_DOMAINS` | — | Comma-separated API domain allowlist (empty = allow all) |
 | `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
-| `MCE_{SERVER}_AUTH` | — | Auth header per server |
+| `MCE_{SERVER}_AUTH` | — | Auth header per server (e.g. `Authorization: Bearer <token>`) |
 
 ### Swagger Config (`config/swaggers.yaml`)
 
@@ -164,26 +195,79 @@ servers:
     swagger_url: "https://api.weather.example.com/v1/openapi.json"
     base_url: "https://api.weather.example.com/v1"
     auth_header: "${WEATHER_API_KEY}"   # Resolved from env
-    is_read_only: true
+    is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
+```
+
+> If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
+
+### LLM Enhancement (Optional)
+
+When `MCE_LLM_ENHANCE=true`, the compiler sends each generated function through an LLM to improve docstrings and add usage examples. Requires the `[llm]` extra and a valid `MCE_LLM_API_KEY`.
+
+```bash
+pip install -e ".[llm]"
+
+# Supports any LiteLLM-compatible provider:
+MCE_LLM_MODEL=openai/gpt-4o           # OpenAI
+MCE_LLM_MODEL=anthropic/claude-3-5-sonnet-20241022  # Anthropic
+MCE_LLM_MODEL=gemini/gemini-2.0-flash # Google Gemini (default)
+MCE_LLM_MODEL=openrouter/mistralai/mistral-7b-instruct  # OpenRouter
 ```
 
 ## Security
 
 MCE uses a **defense-in-depth** approach:
 
-1. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Blocks dangerous imports (`os`, `sys`, `subprocess`, `socket`) and calls (`eval`, `exec`, `open`, `__import__`).
+1. **Code Size Limit** — Code exceeding `MCE_MAX_CODE_SIZE_BYTES` (default 64 KB) is rejected before any analysis begins.
 
-2. **Docker Sandbox** — Code runs in an isolated `python:3.13-slim` container:
+2. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Blocks dangerous imports (`os`, `sys`, `subprocess`, `socket`) and calls (`eval`, `exec`, `open`, `__import__`).
+
+3. **Ruff Lint Gate** — Generated code is linted before entering the sandbox. Syntactically invalid or style-violating code is rejected with actionable feedback.
+
+4. **Docker Sandbox** — Code runs in an isolated `python:3.13-slim` container:
    - Non-root user (`executor`)
-   - Memory limit: 256MB
-   - CPU quota: 50% of one core  
+   - Memory limit: 256 MB
+   - CPU quota: 50% of one core
    - No host volume mounts
    - Read-only filesystem (except `/tmp`)
    - Execution timeout
 
-3. **Credential Injection** — API credentials are injected as Docker environment variables. They never appear in generated code, logs, or tool responses.
+5. **Credential Injection** — API credentials are injected as Docker environment variables. They never appear in generated code, logs, or tool responses.
 
-4. **Read-Only Enforcement** — Servers marked `is_read_only: true` have POST/PUT/PATCH/DELETE endpoints excluded at compile time.
+6. **Read-Only Enforcement** — Servers marked `is_read_only: true` have POST/PUT/PATCH/DELETE endpoints excluded at compile time.
+
+7. **Domain Allowlist** — When `MCE_ALLOWED_DOMAINS` is set, requests to any hostname outside the list are rejected.
+
+## Development
+
+```bash
+# Install all dev dependencies
+pip install -e ".[dev]"
+
+# Run all tests with coverage
+pytest
+
+# Run unit tests only (fast, no Docker)
+pytest tests/unit/ --no-cov -v
+
+# Run integration tests
+pytest tests/integration/ --no-cov -v
+
+# Lint
+ruff check src/ tests/
+
+# Format check
+ruff format --check src/ tests/
+
+# Type check
+mypy src/
+
+# Pre-commit hooks (runs ruff + mypy + pytest ≥90% coverage)
+pre-commit install
+pre-commit run --all-files
+```
+
+Coverage gate: **≥ 90%** (`--cov-fail-under=90`) — enforced by the pre-commit hook on every commit.
 
 ## Examples
 
@@ -191,7 +275,9 @@ See [`examples/`](examples/) for demo scripts and swagger configs.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide (setup, workflow, PR checklist, coding standards).
+
+For the AI agent development guide and internal coding conventions, see [AGENTS.md](AGENTS.md).
 
 ## License
 
