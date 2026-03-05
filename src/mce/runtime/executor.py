@@ -87,8 +87,9 @@ class CodeExecutor:
         # Security scan
         self._ast_guard.validate(code, context=description[:100])
 
-        # Lint check
-        self._lint_code(code)
+        # Lint check (skipped by default; enable with MCE_LINT_ENABLED=true)
+        if self._config.lint_enabled:
+            self._lint_code(code)
 
         # Detect which servers are used for credential injection
         servers_used = _detect_servers_used(code)
