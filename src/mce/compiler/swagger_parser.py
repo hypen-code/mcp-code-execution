@@ -102,7 +102,7 @@ class SwaggerParser:
             SwaggerFetchError: On network or HTTP errors.
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
                 response = await client.get(url, follow_redirects=True)
                 response.raise_for_status()
                 return response.text

@@ -51,6 +51,7 @@ def _request(
         params=filtered_params if filtered_params else None,
         json=json_body,
         timeout=15.0,
+        verify=False,
     )
     r.raise_for_status()
     try:
