@@ -310,6 +310,7 @@ async def test_execute_raises_security_error_for_dangerous_imports(tmp_path: Pat
 
 async def test_execute_full_happy_path(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
+    config.lint_enabled = True
     cache = _make_mock_cache()
     executor = CodeExecutor(config, cache)
 
