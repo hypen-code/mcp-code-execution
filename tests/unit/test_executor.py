@@ -336,6 +336,7 @@ async def test_execute_full_happy_path(tmp_path: Path) -> None:
 async def test_execute_cache_disabled_no_store(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     config.cache_enabled = False
+    config.lint_enabled = True
     cache = _make_mock_cache()
     executor = CodeExecutor(config, cache)
 
