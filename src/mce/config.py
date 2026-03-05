@@ -39,6 +39,7 @@ class MCEConfig(BaseSettings):
     llm_model: str = "gemini/gemini-2.0-flash"
 
     # Executor
+    lint_enabled: bool = False  # Set MCE_LINT_ENABLED=true to enable ruff lint validation
     docker_image: str = "mce-sandbox:latest"
     docker_host: str = ""  # e.g. unix:///home/user/.docker/desktop/docker.sock
     execution_timeout_seconds: int = 30
