@@ -90,9 +90,7 @@ parameter names, types, or return structure.
 
     try:
         _sandbox_libraries = [
-            line.strip()
-            for line in Path(config.sandbox_requirements_path).read_text().splitlines()
-            if line.strip()
+            line.strip() for line in Path(config.sandbox_requirements_path).read_text().splitlines() if line.strip()
         ]
     except OSError:
         _sandbox_libraries = []
