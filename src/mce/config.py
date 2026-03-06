@@ -40,6 +40,7 @@ class MCEConfig(BaseSettings):
 
     # Executor
     lint_enabled: bool = False  # Set MCE_LINT_ENABLED=true to enable ruff lint validation
+    sandbox_requirements_path: str = "./sandbox/requirements.txt"
     docker_image: str = "mce-sandbox:latest"
     docker_host: str = ""  # e.g. unix:///home/user/.docker/desktop/docker.sock
     execution_timeout_seconds: int = 30

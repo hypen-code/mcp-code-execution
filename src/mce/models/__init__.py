@@ -110,7 +110,7 @@ class ExecutionResult(BaseModel):
     """Result from sandboxed code execution."""
 
     success: bool
-    data: dict[str, Any] | list[Any] | str | None = None
+    data: dict[str, Any] | list[Any] | str | int | float | bool | None = None
     error: str | None = None
     traceback: str | None = None  # Only populated in debug mode
     prints: str | None = None  # Captured stdout from print() calls in user code
