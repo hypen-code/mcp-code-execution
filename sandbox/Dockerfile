@@ -1,10 +1,8 @@
 FROM python:3.13-slim
 
-# Install only minimal required packages
-RUN pip install --no-cache-dir \
-    httpx==0.28.* \
-    pydantic==2.* \
-    orjson==3.*
+# Install sandbox dependencies from requirements file
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Create non-root user for security
 RUN useradd -r -u 1000 -s /bin/false executor
