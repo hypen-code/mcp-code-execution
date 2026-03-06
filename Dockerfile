@@ -12,12 +12,14 @@ RUN pip install --no-cache-dir -e ".[llm]"
 
 COPY src/ src/
 COPY config/ config/
+COPY sandbox/requirements.txt sandbox/requirements.txt
 
 # Create data and compiled directories
 RUN mkdir -p /app/data /app/compiled
 
 ENV MCE_COMPILED_OUTPUT_DIR=/app/compiled
 ENV MCE_CACHE_DB_PATH=/app/data/cache.db
+ENV MCE_SANDBOX_REQUIREMENTS_PATH=/app/sandbox/requirements.txt
 
 EXPOSE 8000
 

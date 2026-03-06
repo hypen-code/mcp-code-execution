@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
@@ -87,6 +88,15 @@ parameter names, types, or return structure.
         cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
     executor = CodeExecutor(config, cache)
 
+    try:
+        _sandbox_libraries = [
+            line.strip()
+            for line in Path(config.sandbox_requirements_path).read_text().splitlines()
+            if line.strip()
+        ]
+    except OSError:
+        _sandbox_libraries = []
+
     @mcp.tool()
     async def list_servers() -> str:
         """List all available API servers and their functions.
@@ -103,6 +113,7 @@ parameter names, types, or return structure.
             return str(
                 _toon_encode(
                     {
+                        "sandbox_libraries": _sandbox_libraries,
                         "servers": [
                             {
                                 "name": s.name,
@@ -112,7 +123,7 @@ parameter names, types, or return structure.
                                 ],
                             }
                             for s in servers
-                        ]
+                        ],
                     }
                 )
             )
