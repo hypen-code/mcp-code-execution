@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import keyword
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -150,6 +151,8 @@ def _safe_name(name: str) -> str:
     sanitized = re.sub(r"_+", "_", sanitized).strip("_").lower()
     if sanitized and sanitized[0].isdigit():
         sanitized = f"p_{sanitized}"
+    if keyword.iskeyword(sanitized):
+        sanitized = f"{sanitized}_"
     return sanitized or "param"
 
 
