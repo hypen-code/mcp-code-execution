@@ -143,3 +143,40 @@ async def test_response_schema_fields_populated(weather_source: SwaggerSource) -
     assert "temperature" in field_names
     assert "humidity" in field_names
     assert "condition" in field_names
+
+
+def test_sanitize_identifier_camel_case() -> None:
+    """camelCase operationIds are converted to snake_case, not flattened."""
+    source = SwaggerSource(name="test", swagger_url="", base_url="https://example.com")
+    parser = SwaggerParser(source)
+
+    assert parser._sanitize_identifier("getHealth") == "get_health"
+    assert parser._sanitize_identifier("searchDashboards") == "search_dashboards"
+    assert parser._sanitize_identifier("createDashboard") == "create_dashboard"
+    assert parser._sanitize_identifier("updateUserPreferences") == "update_user_preferences"
+
+
+def test_sanitize_identifier_pascal_case() -> None:
+    """PascalCase operationIds are converted to snake_case."""
+    source = SwaggerSource(name="test", swagger_url="", base_url="https://example.com")
+    parser = SwaggerParser(source)
+
+    assert parser._sanitize_identifier("GetHealth") == "get_health"
+    assert parser._sanitize_identifier("ListDashboards") == "list_dashboards"
+
+
+def test_sanitize_identifier_already_snake_case() -> None:
+    """Already-snake_case identifiers pass through unchanged."""
+    source = SwaggerSource(name="test", swagger_url="", base_url="https://example.com")
+    parser = SwaggerParser(source)
+
+    assert parser._sanitize_identifier("get_current_weather") == "get_current_weather"
+    assert parser._sanitize_identifier("list_pets") == "list_pets"
+
+
+def test_sanitize_identifier_abbreviations() -> None:
+    """Abbreviations like 'getHTTPStatus' → 'get_http_status'."""
+    source = SwaggerSource(name="test", swagger_url="", base_url="https://example.com")
+    parser = SwaggerParser(source)
+
+    assert parser._sanitize_identifier("getHTTPStatus") == "get_http_status"

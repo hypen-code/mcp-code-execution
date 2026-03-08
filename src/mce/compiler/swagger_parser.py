@@ -267,14 +267,21 @@ class SwaggerParser:
         return f"{method.lower()}_{'_'.join(parts)}" or f"{method.lower()}_endpoint"
 
     def _sanitize_identifier(self, name: str) -> str:
-        """Convert a string to a valid Python identifier.
+        """Convert a string to a valid Python snake_case identifier.
+
+        Handles camelCase/PascalCase operationIds (e.g. Grafana, OpenAPI) so that
+        ``getHealth`` → ``get_health`` rather than ``gethealth``.
 
         Args:
-            name: Raw identifier string.
+            name: Raw identifier string (may be camelCase, PascalCase, or already snake_case).
 
         Returns:
             Clean snake_case Python identifier.
         """
+        # Split camelCase/PascalCase boundaries before lowercasing
+        name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+        name = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", name)
+        # Replace non-identifier characters with underscores
         name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
         name = re.sub(r"_+", "_", name).strip("_")
         if name and name[0].isdigit():

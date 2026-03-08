@@ -132,16 +132,22 @@ def _build_path_formatted(endpoint: EndpointSpec) -> str:
 
 
 def _safe_name(name: str) -> str:
-    """Sanitize a parameter name to a valid Python identifier.
+    """Sanitize a parameter name to a valid Python snake_case identifier.
+
+    Handles camelCase names (e.g. ``dashboardId`` → ``dashboard_id``) so that
+    generated parameter names are readable and follow Python conventions.
 
     Args:
-        name: Raw parameter name.
+        name: Raw parameter name (may be camelCase or already snake_case).
 
     Returns:
-        Safe Python identifier.
+        Safe snake_case Python identifier.
     """
+    # Split camelCase/PascalCase boundaries before lowercasing
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    name = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", name)
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_").lower()
     if sanitized and sanitized[0].isdigit():
         sanitized = f"p_{sanitized}"
     return sanitized or "param"
