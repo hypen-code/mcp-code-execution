@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import re
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +50,7 @@ class CompileResult:
         self.skipped: list[str] = []
         self.failed: list[str] = []
         self.total_endpoints: int = 0
+        self.mcp_json: str | None = None
 
 
 class Orchestrator:
@@ -125,6 +129,7 @@ class Orchestrator:
 
         if not dry_run:
             self._lint_all_generated_code()
+            result.mcp_json = self._generate_mcp_json(sources)
 
         logger.info(
             "compile_complete",
@@ -176,8 +181,22 @@ class Orchestrator:
         logger.info("server_compiled", server=source.name, endpoints=len(spec.endpoints))
         return len(spec.endpoints)
 
+    @staticmethod
+    def _template_hash() -> str:
+        """Compute a short hash covering the template and codegen logic."""
+        compiler_dir = Path(__file__).parent
+        paths = [
+            compiler_dir / "templates" / "function.py.j2",
+            compiler_dir / "codegen.py",
+        ]
+        h = hashlib.sha256()
+        for p in paths:
+            with contextlib.suppress(OSError):
+                h.update(p.read_bytes())
+        return h.hexdigest()[:12]
+
     def _is_up_to_date(self, manifest_path: Path, current_hash: str) -> bool:
-        """Check if existing compiled output matches the current swagger hash.
+        """Check if existing compiled output matches the current swagger and template hashes.
 
         Args:
             manifest_path: Path to existing manifest.json.
@@ -191,7 +210,10 @@ class Orchestrator:
         try:
             with open(manifest_path, encoding="utf-8") as f:
                 manifest = json.load(f)
-            return str(manifest.get("swagger_hash")) == current_hash
+            return (
+                str(manifest.get("swagger_hash")) == current_hash
+                and str(manifest.get("template_hash")) == self._template_hash()
+            )
         except (OSError, json.JSONDecodeError, KeyError):
             return False
 
@@ -238,6 +260,7 @@ class Orchestrator:
             server_name=server_dir.name,
             description=spec.description,
             swagger_hash=spec.swagger_hash,
+            template_hash=self._template_hash(),
             compiled_at=datetime.now(tz=UTC).isoformat(),
             base_url=spec.base_url,
             is_read_only=spec.is_read_only,
@@ -249,6 +272,88 @@ class Orchestrator:
             json.dump(manifest.model_dump(), f, indent=2)
 
         logger.debug("manifest_written", path=str(manifest_path))
+
+    def _find_latest_server_dir(self) -> Path | None:
+        """Return the compiled server directory with the most recently written manifest.
+
+        Returns:
+            Path to the latest server directory, or None if no servers are compiled.
+        """
+        if not self._output_dir.exists():
+            return None
+        server_dirs = [p for p in self._output_dir.iterdir() if p.is_dir()]
+        candidates = [(d, (d / "manifest.json").stat().st_mtime) for d in server_dirs if (d / "manifest.json").exists()]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda x: x[1])[0]
+
+    @staticmethod
+    def _resolve_mce_command(compiled_output_dir: Path) -> str:
+        """Resolve the absolute path to the `mce` executable for this project.
+
+        Walks up from *compiled_output_dir* looking for a `.venv/bin/mce` binary.
+        Falls back to the directory of the current Python interpreter if not found.
+
+        Args:
+            compiled_output_dir: Absolute path to the compiled output directory.
+
+        Returns:
+            Absolute path string to the `mce` executable.
+        """
+        candidate = compiled_output_dir.resolve()
+        for _ in range(6):
+            mce_path = candidate / ".venv" / "bin" / "mce"
+            if mce_path.exists():
+                return str(mce_path)
+            candidate = candidate.parent
+        # Fallback: same bin directory as the running Python interpreter
+        return str(Path(sys.executable).parent / "mce")
+
+    def _generate_mcp_json(self, sources: list[SwaggerSource]) -> str | None:
+        """Generate an MCP JSON config snippet for the latest compiled server.
+
+        The JSON follows the standard MCP client ``mcpServers`` shape and includes
+        all environment variables required to run ``mce serve`` for the server.
+
+        Args:
+            sources: All swagger sources from the config file.
+
+        Returns:
+            Formatted JSON string, or None when no compiled server exists.
+        """
+        latest_dir = self._find_latest_server_dir()
+        if latest_dir is None:
+            return None
+
+        mce_cmd = self._resolve_mce_command(self._output_dir)
+
+        abs_compiled_dir = self._output_dir.resolve()
+        abs_cache_db = Path(self._config.cache_db_path).resolve()
+
+        env: dict[str, str] = {
+            "MCE_COMPILED_OUTPUT_DIR": str(abs_compiled_dir),
+            "MCE_DOCKER_IMAGE": self._config.docker_image,
+            "MCE_NETWORK_MODE": self._config.network_mode,
+            "MCE_CACHE_DB_PATH": str(abs_cache_db),
+        }
+
+        for src in sources:
+            env_prefix = src.name.upper()
+            env[f"MCE_{env_prefix}_BASE_URL"] = src.base_url
+            if src.auth_header:
+                env[f"MCE_{env_prefix}_AUTH"] = src.auth_header
+
+        mcp_config = {
+            "mcpServers": {
+                "mcp-code-execution": {
+                    "command": mce_cmd,
+                    "args": ["serve"],
+                    "env": env,
+                }
+            }
+        }
+
+        return json.dumps(mcp_config, indent=2)
 
     def _lint_all_generated_code(self) -> None:
         """Run ruff check on all generated Python files."""

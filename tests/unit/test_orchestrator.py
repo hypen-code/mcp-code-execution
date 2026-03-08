@@ -151,9 +151,12 @@ def test_is_up_to_date_returns_false_when_no_manifest(tmp_path: Path) -> None:
 
 def test_is_up_to_date_returns_true_when_hashes_match(tmp_path: Path) -> None:
     manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(json.dumps({"swagger_hash": "correct_hash"}), encoding="utf-8")
     config = _make_config(tmp_path)
     orchestrator = Orchestrator(config)
+    manifest_path.write_text(
+        json.dumps({"swagger_hash": "correct_hash", "template_hash": orchestrator._template_hash()}),
+        encoding="utf-8",
+    )
     assert orchestrator._is_up_to_date(manifest_path, "correct_hash") is True
 
 

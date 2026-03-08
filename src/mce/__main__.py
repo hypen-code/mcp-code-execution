@@ -1,4 +1,4 @@
-"""MCE CLI entry point — supports `compile`, `serve`, and combined `run` commands."""
+"""MCE CLI entry point — supports `compile`, `clean`, `serve`, and combined `run` commands."""
 
 from __future__ import annotations
 
@@ -23,6 +23,26 @@ def _build_parser() -> argparse.ArgumentParser:
         description="MCE — MCP Code Execution: Turn any Swagger into LLM-native functions",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # clean subcommand
+    clean_parser = subparsers.add_parser("clean", help="Remove the compiled output directory")
+    clean_parser.add_argument(
+        "then",
+        nargs="?",
+        choices=["compile"],
+        metavar="compile",
+        help="Optionally run compile immediately after cleaning",
+    )
+    clean_parser.add_argument(
+        "--llm-enhance",
+        action="store_true",
+        help="(with compile) Use LLM to improve generated code quality",
+    )
+    clean_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="(with compile) Parse swaggers but don't write output",
+    )
 
     # compile subcommand
     compile_parser = subparsers.add_parser("compile", help="Compile swagger sources to Python functions")
@@ -69,6 +89,32 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _cmd_clean(args: argparse.Namespace) -> int:
+    """Remove the compiled output directory.
+
+    Args:
+        args: Parsed CLI arguments (may include ``then="compile"``).
+
+    Returns:
+        Exit code (0 = success).
+    """
+    import shutil  # noqa: PLC0415
+
+    config = load_config()
+    compiled_dir = config.compiled_output_dir
+
+    if compiled_dir and __import__("pathlib").Path(compiled_dir).exists():
+        shutil.rmtree(compiled_dir)
+        print(f"🗑  Removed: {compiled_dir}")
+    else:
+        print(f"⏭  Nothing to clean: {compiled_dir!r} does not exist")
+
+    if getattr(args, "then", None) == "compile":
+        return await _cmd_compile(args)
+
+    return 0
+
+
 async def _cmd_compile(args: argparse.Namespace) -> int:
     """Execute the compile command.
 
@@ -105,6 +151,10 @@ async def _cmd_compile(args: argparse.Namespace) -> int:
         print(f"✅ Compiled: {', '.join(result.compiled)} ({result.total_endpoints} endpoints)")
     if result.skipped:
         print(f"⏭  Skipped (up-to-date): {', '.join(result.skipped)}")
+
+    if result.mcp_json:
+        print("\n--- MCP Server Config (add to your MCP client) ---")
+        print(result.mcp_json)
 
     return 0
 
@@ -202,6 +252,7 @@ def main() -> None:
         sys.exit(0)
 
     command_map = {
+        "clean": _cmd_clean,
         "compile": _cmd_compile,
         "serve": _cmd_serve,
         "run": _cmd_run,

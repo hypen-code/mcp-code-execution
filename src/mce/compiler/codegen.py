@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import keyword
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -78,7 +79,12 @@ def _build_function_signature(endpoint: EndpointSpec) -> str:
     for p in endpoint.parameters:
         if not p.required:
             annotation = _swagger_type_to_python(p.param_type)
-            default = f'"{p.default}"' if p.default and p.param_type == "string" else p.default or "None"
+            if p.param_type == "array":
+                default = "None"
+            elif p.default and p.param_type == "string":
+                default = f'"{p.default}"'
+            else:
+                default = p.default or "None"
             parts.append(f"{_safe_name(p.name)}: {annotation} | None = {default}")
 
     # Request body as json_body for mutating methods
@@ -123,22 +129,30 @@ def _build_path_formatted(endpoint: EndpointSpec) -> str:
     path_params = [p for p in endpoint.parameters if p.location == "path"]
     for p in path_params:
         path = path.replace(f"{{{p.name}}}", f"{{{_safe_name(p.name)}}}")
-    return f'f"{path}"'
+    return f'f"{path}"' if path_params else f'"{path}"'
 
 
 def _safe_name(name: str) -> str:
-    """Sanitize a parameter name to a valid Python identifier.
+    """Sanitize a parameter name to a valid Python snake_case identifier.
+
+    Handles camelCase names (e.g. ``dashboardId`` → ``dashboard_id``) so that
+    generated parameter names are readable and follow Python conventions.
 
     Args:
-        name: Raw parameter name.
+        name: Raw parameter name (may be camelCase or already snake_case).
 
     Returns:
-        Safe Python identifier.
+        Safe snake_case Python identifier.
     """
+    # Split camelCase/PascalCase boundaries before lowercasing
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    name = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", name)
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_").lower()
     if sanitized and sanitized[0].isdigit():
         sanitized = f"p_{sanitized}"
+    if keyword.iskeyword(sanitized):
+        sanitized = f"{sanitized}_"
     return sanitized or "param"
 
 
@@ -244,4 +258,5 @@ class CodeGenerator:
             "docstring_args": _build_docstring_args(endpoint),
             "response_fields": [r.name for r in endpoint.response_schema],
             "has_query_params": any(p.location == "query" for p in endpoint.parameters),
+            "base_url": endpoint.base_url,
         }

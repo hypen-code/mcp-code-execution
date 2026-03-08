@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from mce.__main__ import _build_parser, _cmd_compile, _cmd_run, _cmd_serve, main
+from mce.__main__ import _build_parser, _cmd_clean, _cmd_compile, _cmd_run, _cmd_serve, main
 
 # ---------------------------------------------------------------------------
 # _build_parser
@@ -78,6 +78,100 @@ def test_build_parser_run_http_transport() -> None:
     parser = _build_parser()
     args = parser.parse_args(["run", "--transport", "http"])
     assert args.transport == "http"
+
+
+# ---------------------------------------------------------------------------
+# parser — clean subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_clean_subcommand() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["clean"])
+    assert args.command == "clean"
+    assert args.then is None
+    assert args.dry_run is False
+    assert args.llm_enhance is False
+
+
+def test_build_parser_clean_compile() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["clean", "compile"])
+    assert args.command == "clean"
+    assert args.then == "compile"
+
+
+def test_build_parser_clean_compile_with_flags() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["clean", "compile", "--dry-run", "--llm-enhance"])
+    assert args.then == "compile"
+    assert args.dry_run is True
+    assert args.llm_enhance is True
+
+
+# ---------------------------------------------------------------------------
+# _cmd_clean
+# ---------------------------------------------------------------------------
+
+
+async def test_cmd_clean_removes_directory(tmp_path: Path) -> None:
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir()
+    (compiled_dir / "some_file.py").write_text("x = 1")
+
+    args = MagicMock()
+    args.then = None
+
+    with patch("mce.__main__.load_config") as mock_cfg:
+        cfg = MagicMock()
+        cfg.compiled_output_dir = str(compiled_dir)
+        mock_cfg.return_value = cfg
+        code = await _cmd_clean(args)
+
+    assert code == 0
+    assert not compiled_dir.exists()
+
+
+async def test_cmd_clean_nonexistent_dir_exits_0(tmp_path: Path) -> None:
+    args = MagicMock()
+    args.then = None
+
+    with patch("mce.__main__.load_config") as mock_cfg:
+        cfg = MagicMock()
+        cfg.compiled_output_dir = str(tmp_path / "does_not_exist")
+        mock_cfg.return_value = cfg
+        code = await _cmd_clean(args)
+
+    assert code == 0
+
+
+async def test_cmd_clean_then_compile_calls_compile(tmp_path: Path) -> None:
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.compiled = ["weather"]
+    mock_result.skipped = []
+    mock_result.failed = []
+    mock_result.total_endpoints = 3
+    mock_result.mcp_json = None
+
+    args = MagicMock()
+    args.then = "compile"
+    args.llm_enhance = False
+    args.dry_run = False
+
+    with (
+        patch("mce.__main__.load_config") as mock_cfg,
+        patch("mce.compiler.orchestrator.Orchestrator.compile_all", new=AsyncMock(return_value=mock_result)),
+    ):
+        cfg = MagicMock()
+        cfg.compiled_output_dir = str(compiled_dir)
+        mock_cfg.return_value = cfg
+        code = await _cmd_clean(args)
+
+    assert code == 0
+    assert not compiled_dir.exists()
 
 
 # ---------------------------------------------------------------------------

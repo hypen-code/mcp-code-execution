@@ -15,6 +15,10 @@ repos:
         args:
           - --strict
           - --config-file=pyproject.toml
+          - src
+          - tests
+        pass_filenames: false
+        always_run: true
         additional_dependencies:
           - pydantic>=2.0
           - pydantic-settings>=2.0
@@ -23,6 +27,7 @@ repos:
           - anyio>=4.0.0
           - structlog>=24.0.0
           - types-PyYAML>=6.0
+          - pytest>=7.2
 
   # --- Pytest with mandatory coverage >= 90% --------------------------------
   - repo: local
