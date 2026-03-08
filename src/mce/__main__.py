@@ -106,6 +106,10 @@ async def _cmd_compile(args: argparse.Namespace) -> int:
     if result.skipped:
         print(f"⏭  Skipped (up-to-date): {', '.join(result.skipped)}")
 
+    if result.mcp_json:
+        print("\n--- MCP Server Config (add to your MCP client) ---")
+        print(result.mcp_json)
+
     return 0
 
 

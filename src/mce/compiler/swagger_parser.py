@@ -235,6 +235,10 @@ class SwaggerParser:
 
         response_schema = self._parse_response_schema(operation.get("responses", {}))
 
+        # Operation-level servers override the global base URL
+        op_servers: list[Any] = operation.get("servers", [])
+        op_base_url = str(op_servers[0].get("url", "")).rstrip("/") if op_servers else ""
+
         return EndpointSpec(
             path=path,
             method=method,
@@ -245,6 +249,7 @@ class SwaggerParser:
             request_body_schema=request_body_schema,
             response_schema=response_schema,
             tags=operation.get("tags", []),
+            base_url=op_base_url,
         )
 
     def _generate_operation_id(self, method: str, path: str) -> str:

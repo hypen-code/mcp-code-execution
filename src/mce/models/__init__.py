@@ -44,6 +44,7 @@ class EndpointSpec(BaseModel):
     request_body_schema: dict[str, Any] | None = None
     response_schema: list[ResponseField] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    base_url: str = ""  # Override base URL for this endpoint (from operation-level servers)
 
 
 class ServerSpec(BaseModel):

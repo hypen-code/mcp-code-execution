@@ -244,4 +244,5 @@ class CodeGenerator:
             "docstring_args": _build_docstring_args(endpoint),
             "response_fields": [r.name for r in endpoint.response_schema],
             "has_query_params": any(p.location == "query" for p in endpoint.parameters),
+            "base_url": endpoint.base_url,
         }
