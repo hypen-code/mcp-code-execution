@@ -128,7 +128,7 @@ def _build_path_formatted(endpoint: EndpointSpec) -> str:
     path_params = [p for p in endpoint.parameters if p.location == "path"]
     for p in path_params:
         path = path.replace(f"{{{p.name}}}", f"{{{_safe_name(p.name)}}}")
-    return f'f"{path}"'
+    return f'f"{path}"' if path_params else f'"{path}"'
 
 
 def _safe_name(name: str) -> str:
