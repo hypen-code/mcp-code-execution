@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import re
 import subprocess
@@ -179,8 +181,22 @@ class Orchestrator:
         logger.info("server_compiled", server=source.name, endpoints=len(spec.endpoints))
         return len(spec.endpoints)
 
+    @staticmethod
+    def _template_hash() -> str:
+        """Compute a short hash covering the template and codegen logic."""
+        compiler_dir = Path(__file__).parent
+        paths = [
+            compiler_dir / "templates" / "function.py.j2",
+            compiler_dir / "codegen.py",
+        ]
+        h = hashlib.sha256()
+        for p in paths:
+            with contextlib.suppress(OSError):
+                h.update(p.read_bytes())
+        return h.hexdigest()[:12]
+
     def _is_up_to_date(self, manifest_path: Path, current_hash: str) -> bool:
-        """Check if existing compiled output matches the current swagger hash.
+        """Check if existing compiled output matches the current swagger and template hashes.
 
         Args:
             manifest_path: Path to existing manifest.json.
@@ -194,7 +210,10 @@ class Orchestrator:
         try:
             with open(manifest_path, encoding="utf-8") as f:
                 manifest = json.load(f)
-            return str(manifest.get("swagger_hash")) == current_hash
+            return (
+                str(manifest.get("swagger_hash")) == current_hash
+                and str(manifest.get("template_hash")) == self._template_hash()
+            )
         except (OSError, json.JSONDecodeError, KeyError):
             return False
 
@@ -241,6 +260,7 @@ class Orchestrator:
             server_name=server_dir.name,
             description=spec.description,
             swagger_hash=spec.swagger_hash,
+            template_hash=self._template_hash(),
             compiled_at=datetime.now(tz=UTC).isoformat(),
             base_url=spec.base_url,
             is_read_only=spec.is_read_only,

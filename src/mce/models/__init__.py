@@ -170,6 +170,7 @@ class ServerManifest(BaseModel):
     server_name: str
     description: str
     swagger_hash: str
+    template_hash: str = ""
     compiled_at: str
     base_url: str
     is_read_only: bool

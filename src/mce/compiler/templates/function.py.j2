@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -44,12 +45,21 @@ def _request(
         httpx.HTTPStatusError: On 4xx/5xx responses.
     """
     url = f"{base_url or _BASE_URL}{path}"
-    filtered_params = {k: v for k, v in (params or {}).items() if v is not None}
+    filtered = {k: v for k, v in (params or {}).items() if v is not None}
+    if filtered:
+        # List params need literal commas (not %2C), so build query string manually.
+        scalar = {k: v for k, v in filtered.items() if not isinstance(v, list)}
+        qs = urllib.parse.urlencode(scalar)
+        for k, v in filtered.items():
+            if isinstance(v, list):
+                encoded_key = urllib.parse.quote(str(k))
+                encoded_val = ",".join(urllib.parse.quote(str(i), safe="") for i in v)
+                qs = f"{qs}&{encoded_key}={encoded_val}" if qs else f"{encoded_key}={encoded_val}"
+        url = f"{url}?{qs}"
     r = httpx.request(
         method,
         url,
         headers=_headers(),
-        params=filtered_params if filtered_params else None,
         json=json_body,
         timeout=15.0,
         verify=False,

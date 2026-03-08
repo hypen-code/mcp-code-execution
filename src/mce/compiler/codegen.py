@@ -78,7 +78,12 @@ def _build_function_signature(endpoint: EndpointSpec) -> str:
     for p in endpoint.parameters:
         if not p.required:
             annotation = _swagger_type_to_python(p.param_type)
-            default = f'"{p.default}"' if p.default and p.param_type == "string" else p.default or "None"
+            if p.param_type == "array":
+                default = "None"
+            elif p.default and p.param_type == "string":
+                default = f'"{p.default}"'
+            else:
+                default = p.default or "None"
             parts.append(f"{_safe_name(p.name)}: {annotation} | None = {default}")
 
     # Request body as json_body for mutating methods
