@@ -16,14 +16,16 @@
 
 ## The Solution
 
-MCE exposes **5 meta-tools** instead of N API-specific tools:
+MCE exposes **5 meta-tools + 1 prompt** instead of N API-specific tools:
 
 ```
-list_servers     → discover available APIs and their functions
-get_functions    → inspect 1–5 function signatures and return schemas (batch)
-execute_code     → run Python in a sandboxed Docker container
-get_cached_code  → search previously successful code snippets
-run_cached_code  → re-execute a cached snippet, optionally with new parameters
+list_servers        → discover available APIs and their functions
+get_functions       → inspect 1–5 function signatures and return schemas (batch)
+execute_code        → run Python in a sandboxed Docker container
+get_cached_code     → search previously successful code snippets
+run_cached_code     → re-execute a cached snippet, optionally with new parameters
+
+reusable_code_guide → prompt: concise rules for writing parameterized, cacheable code
 ```
 
 The LLM workflow: **discover → inspect → generate → execute → cache → reuse**
