@@ -75,7 +75,7 @@ class SwaggerSource(BaseModel):
     headers: str = ""  # "[key1:value1,key2:value2]" format; parsed into extra_headers
 
     @model_validator(mode="after")
-    def _parse_headers(self) -> "SwaggerSource":
+    def _parse_headers(self) -> SwaggerSource:
         if self.headers:
             raw = self.headers.strip().strip("[]")
             for pair in raw.split(","):
