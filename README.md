@@ -11,17 +11,21 @@
 1. **Context window bloat** — Naive Swagger-to-MCP tools expose every API endpoint as a separate tool. A 200-endpoint API burns hundreds of tokens per call just describing tools the LLM will never use.
 2. **Tool processing limits** — MCP clients cap tool counts. Large APIs hit the limit and fail silently.
 3. **Insecure execution** — Running LLM-generated code on the host is dangerous. You need isolation.
+4. **Bloated responses** — Raw API responses dump everything: metadata, nulls, pagination envelopes, deprecated fields. The LLM sees 90% noise and wastes context on data it never needed.
+5. **Integration friction** — Every API with a Swagger spec should be instantly usable by an LLM. Instead, developers spend days writing glue code, auth wrappers, and prompt scaffolding just to call a single endpoint.
 
 ## The Solution
 
-MCE exposes **5 meta-tools** instead of N API-specific tools:
+MCE exposes **5 meta-tools + 1 prompt** instead of N API-specific tools:
 
 ```
-list_servers     → discover available APIs and their functions
-get_function     → inspect a specific function's signature and return schema
-execute_code     → run Python in a sandboxed Docker container
-get_cached_code  → search previously successful code snippets
-run_cached_code  → re-execute a cached snippet, optionally with new parameters
+list_servers        → discover available APIs and their functions
+get_functions       → inspect 1–5 function signatures and return schemas (batch)
+execute_code        → run Python in a sandboxed Docker container
+get_cached_code     → search previously successful code snippets
+run_cached_code     → re-execute a cached snippet, optionally with new parameters
+
+reusable_code_guide → prompt: concise rules for writing parameterized, cacheable code
 ```
 
 The LLM workflow: **discover → inspect → generate → execute → cache → reuse**
@@ -43,7 +47,7 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
 │  │           5 MCP Tools (exposed to LLM)         │  │
-│  │  list_servers | get_function | execute_code    │  │
+│  │  list_servers | get_functions | execute_code   │  │
 │  │  get_cached_code | run_cached_code             │  │
 │  └───────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
@@ -90,12 +94,17 @@ docker network create mce_network
 ```bash
 mce compile
 # ✅ Compiled: weather, hotel_booking (12 endpoints)
+# --- MCP Server Config (add to your MCP client) ---
+# { ... ready-to-use config snippet ... }
 
 # Optional: enhance docstrings and examples with an LLM
 mce compile --llm-enhance
 
 # Validate without writing output
 mce compile --dry-run
+
+# Remove compiled output and recompile
+mce clean compile
 ```
 
 ### 5. Run the MCP Server
@@ -133,20 +142,24 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 }
 ```
 
+> `mce compile` prints a ready-to-use config snippet you can paste directly.
+
 ## How It Works
 
 ### Tool Workflow Example
 
 ```
 LLM → list_servers()
-← { servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
+← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
 
-LLM → get_function("weather", "get_current_weather")
-← { parameters: [{ name: "city", type: "str", required: true }], usage_example: "..." }
+LLM → get_functions([{"server_name": "weather", "function_name": "get_current_weather"}])
+← { functions: [{ parameters: [...], response_fields: [...], import_statement: "from weather.functions import get_current_weather" }] }
 
 LLM → execute_code("""
 from weather.functions import get_current_weather
-result = get_current_weather(city="London", units="metric")
+
+def main():
+    return get_current_weather(city="London", units="metric")
 """, description="Get London weather")
 ← { success: true, data: { temperature: 15.2, condition: "Cloudy" }, cache_id: "abc123" }
 
@@ -156,6 +169,10 @@ LLM → get_cached_code(search="weather")
 LLM → run_cached_code("abc123", params={"city": "Paris"})
 ← { success: true, data: { temperature: 18.5, condition: "Sunny" }, cache_id: "def456" }
 ```
+
+> **`get_functions` must be called before writing any `execute_code` payload.** It returns the exact `import_statement`, parameter names, and response schema. Guessing will produce broken code.
+
+> **`execute_code` requires** either a `main()` function that returns the result, or a module-level `result` variable.
 
 ## Configuration
 
@@ -173,6 +190,7 @@ LLM → run_cached_code("abc123", params={"city": "Paris"})
 | `MCE_LLM_ENHANCE` | `false` | Enable LLM docstring enhancement at compile time |
 | `MCE_LLM_MODEL` | `gemini/gemini-2.0-flash` | LiteLLM model string (`provider/model`) |
 | `MCE_LLM_API_KEY` | — | API key for the LLM provider |
+| `MCE_LINT_ENABLED` | `false` | Enable ruff lint validation before sandbox execution |
 | `MCE_DOCKER_IMAGE` | `mce-sandbox:latest` | Sandbox image name |
 | `MCE_DOCKER_HOST` | — | Docker host socket (e.g. `unix:///var/run/docker.sock`) |
 | `MCE_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
@@ -186,6 +204,7 @@ LLM → run_cached_code("abc123", params={"city": "Paris"})
 | `MCE_ALLOWED_DOMAINS` | — | Comma-separated API domain allowlist (empty = allow all) |
 | `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
 | `MCE_{SERVER}_AUTH` | — | Auth header per server (e.g. `Authorization: Bearer <token>`) |
+| `MCE_{SERVER}_EXTRA_HEADERS` | — | JSON object of custom HTTP headers per server (e.g. `{"X-Version":"v1"}`) |
 
 ### Swagger Config (`config/swaggers.yaml`)
 
@@ -196,9 +215,20 @@ servers:
     base_url: "https://api.weather.example.com/v1"
     auth_header: "${WEATHER_API_KEY}"   # Resolved from env
     is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
+    extra_headers:                      # Optional: custom headers injected on every request
+      X-API-Version: "v1"
+      X-Custom-Header: "value"
+
+  - name: hotel_booking
+    swagger_url: "./swaggers/hotel.yaml"   # Local file paths are supported
+    base_url: "https://api.hotel.example.com/v2"
+    auth_header: "Bearer ${HOTEL_API_TOKEN}"
+    is_read_only: false
 ```
 
 > If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
+
+> `extra_headers` are serialized to `MCE_{SERVER}_EXTRA_HEADERS` (JSON string) at compile time and injected into every generated function call.
 
 ### LLM Enhancement (Optional)
 
@@ -222,7 +252,7 @@ MCE uses a **defense-in-depth** approach:
 
 2. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Blocks dangerous imports (`os`, `sys`, `subprocess`, `socket`) and calls (`eval`, `exec`, `open`, `__import__`).
 
-3. **Ruff Lint Gate** — Generated code is linted before entering the sandbox. Syntactically invalid or style-violating code is rejected with actionable feedback.
+3. **Ruff Lint Gate** — When `MCE_LINT_ENABLED=true`, generated code is linted before entering the sandbox. Syntactically invalid or style-violating code is rejected with actionable feedback.
 
 4. **Docker Sandbox** — Code runs in an isolated `python:3.13-slim` container:
    - Non-root user (`executor`)

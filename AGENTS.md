@@ -8,15 +8,17 @@
 ## 1. Project Overview
 
 **MCE** is a production-grade MCP server built with Python 3.13 and FastMCP.
-It exposes **4 meta-tools** to LLMs instead of bloating the context with
-N per-endpoint tools. The 4 tools are:
+It exposes **5 meta-tools + 1 prompt** to LLMs instead of bloating the context
+with N per-endpoint tools:
 
-| Tool | Purpose |
-|------|---------|
+| Tool / Prompt | Purpose |
+|---------------|---------|
 | `list_servers` | Discover compiled API servers and their functions |
-| `get_function` | Inspect a specific function's parameters and response schema |
+| `get_functions` | Inspect 1–5 function signatures and return schemas (batch) |
 | `execute_code` | Run LLM-generated Python code in an isolated Docker sandbox |
-| `get_cached_code` | Find and reuse previously successful code snippets |
+| `get_cached_code` | Find previously successful code snippets |
+| `run_cached_code` | Re-execute a cached snippet with optional parameter overrides |
+| `reusable_code_guide` *(prompt)* | Concise rules for writing parameterized, cacheable code |
 
 **Key invariant**: credentials are **never** embedded in generated code or logs.
 They are injected exclusively as Docker environment variables at runtime.
@@ -36,8 +38,8 @@ They are injected exclusively as Docker environment variables at runtime.
 │   └── requirements.txt                ← httpx, pydantic, orjson only
 ├── src/mce/
 │   ├── __init__.py                     ← version only
-│   ├── __main__.py                     ← CLI: compile | serve | run
-│   ├── server.py                       ← FastMCP tool registration (4 tools)
+│   ├── __main__.py                     ← CLI: clean | compile | serve | run
+│   ├── server.py                       ← FastMCP tool registration (5 tools + 1 prompt)
 │   ├── config.py                       ← MCEConfig (pydantic-settings)
 │   ├── errors.py                       ← full exception hierarchy
 │   ├── models/__init__.py              ← ALL pydantic models (single file)
@@ -396,12 +398,14 @@ database path across tests — isolation is mandatory.
 
 ### `server.py`
 - `create_server(config)` returns a `FastMCP` instance.
-- All 4 tools registered inside `create_server()` via `@mcp.tool()`.
+- All 5 tools registered via `@mcp.tool()`; 1 prompt via `@mcp.prompt()`.
 - Registry and cache are created inside `create_server()` and closed over.
 - Tool functions: always `async def`, always return `dict`, never raise.
 - Error returns always include `"error_type"` key for programmatic handling.
+- `instructions=` on `FastMCP(...)` is a single-line workflow hint only — keep it under 2 sentences.
 
 ### `__main__.py`
+- CLI entry point: `mce clean [compile] [--llm-enhance] [--dry-run]`
 - CLI entry point: `mce compile [--llm-enhance] [--dry-run]`
 - CLI entry point: `mce serve [--transport stdio|http] [--host] [--port]`
 - CLI entry point: `mce run` (compile + serve)
@@ -412,11 +416,11 @@ database path across tests — isolation is mandatory.
 
 ## 8. Making Changes
 
-### 8.1 Adding a New MCP Tool
-1. Define the tool function in `server.py` using `@mcp.tool()`.
+### 8.1 Adding a New MCP Tool or Prompt
+1. Define the tool with `@mcp.tool()` or the prompt with `@mcp.prompt()` in `server.py`.
 2. Add error handling covering every exception the tool can raise.
 3. Add a unit test in `tests/unit/test_server.py` (create if absent).
-4. Update `README.md` tool table.
+4. Update `README.md` — tools/prompt table, workflow example, and diagram if needed.
 
 ### 8.2 Adding a New Model
 1. Add to `src/mce/models/__init__.py` under the correct section.
@@ -444,26 +448,29 @@ database path across tests — isolation is mandatory.
    by catching `aiosqlite.OperationalError` on startup.
 3. Update `test_cache.py` to cover the new columns/indexes.
 
-### 8.7 Keeping `README.md` in Sync
+### 8.7 Updating `README.md` (Mandatory After Every Change)
 
-`README.md` is the canonical public-facing reference for MCE. **Any change
-that affects content documented in `README.md` must update it in the same
-commit.** The sections to keep current are:
+`README.md` is the canonical public-facing reference. **It must be updated in
+the same commit as the code change — no exceptions.** A PR with stale docs is
+rejected at review, the same as a PR with failing tests.
 
-| README section | Triggers an update when … |
-|---------------|---------------------------|
-| **4 meta-tools table** | A tool is added, removed, or renamed in `server.py` |
-| **Quick Start** commands | CLI commands (`__main__.py`) or setup steps change |
-| **Environment Variables table** | Any `MCEConfig` field in `config.py` is added, removed, or renamed |
-| **Swagger Config schema** | `swaggers.yaml` structure changes |
+**Default rule: if you changed code, check README.md.**
+
+| README section | Update when … |
+|---------------|---------------|
+| **Tools / prompt table** | A tool or prompt is added, removed, or renamed in `server.py` |
+| **Quick Start** | Any CLI command in `__main__.py` changes, or setup steps change |
+| **Environment Variables table** | Any `MCEConfig` field is added, removed, or renamed |
+| **Swagger Config schema** | `SwaggerSource` model or `swaggers.yaml` format changes |
 | **Security section** | `ast_guard.py`, `policies.py`, or Docker sandbox constraints change |
-| **Architecture diagram** | New layers, modules, or data-flow steps are introduced |
+| **Architecture diagram** | New modules, layers, or data-flow paths are introduced |
+| **How It Works / workflow** | Tool signatures, calling conventions, or response shapes change |
 
-Rules:
-- Do **not** create additional markdown documentation files — README, ROADMAP,
-  AGENTS, and CONTRIBUTING are the only permitted top-level docs (see
-  Section 10).
-- When in doubt, update `README.md`. Stale public docs are a bug.
+Additional rules:
+- Do **not** create new markdown files — README, ROADMAP, AGENTS, and
+  CONTRIBUTING are the only permitted top-level docs (see Section 10).
+- Keep README examples in sync with actual tool/function signatures.
+- When in doubt, update `README.md`. A stale README is a bug, not a minor issue.
 
 ---
 
@@ -536,13 +543,13 @@ docker network create mce_network
 
 A task is complete only when all of these are true:
 
+- [ ] **`README.md` updated** — every section that documents changed behaviour is current (see Section 8.7). Check this first, not last.
 - [ ] All new/modified functions have full type annotations
 - [ ] All public functions have Google-style docstrings
 - [ ] `ruff check src/ tests/` exits 0
 - [ ] `mypy src/` exits 0
 - [ ] `pytest --cov=mce --cov-fail-under=90` exits 0 (≥ 90% coverage is the **mandatory** gate)
 - [ ] Pre-commit hook passes in full (`pre-commit run --all-files` exits 0)
-- [ ] `README.md` updated if any content it documents has changed (see Section 8.7)
 - [ ] No credentials appear in code, logs, or test assertions
 - [ ] No `print()` statements added
 - [ ] No new files created outside the defined structure (Section 2)
