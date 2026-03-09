@@ -27,6 +27,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "anyio>=4.0.0",
     "toon_format @ git+https://github.com/toon-format/toon-python.git",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

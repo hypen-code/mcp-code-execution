@@ -7,8 +7,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env relative to this file's location (project root), not CWD
-_ENV_FILE = Path(__file__).parent.parent.parent / ".env"
+# Resolve .env from CWD so it works both in dev and when installed via uvx/pip
+_ENV_FILE = Path.cwd() / ".env"
 
 
 class MCEConfig(BaseSettings):
