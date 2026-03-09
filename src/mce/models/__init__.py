@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Swagger / OpenAPI models (swagger.py namespace)
@@ -72,6 +72,17 @@ class SwaggerSource(BaseModel):
     auth_header: str = ""
     is_read_only: bool = False
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    headers: str = ""  # "[key1:value1,key2:value2]" format; parsed into extra_headers
+
+    @model_validator(mode="after")
+    def _parse_headers(self) -> "SwaggerSource":
+        if self.headers:
+            raw = self.headers.strip().strip("[]")
+            for pair in raw.split(","):
+                if ":" in pair:
+                    k, _, v = pair.partition(":")
+                    self.extra_headers[k.strip()] = v.strip()
+        return self
 
 
 # ---------------------------------------------------------------------------
