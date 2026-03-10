@@ -285,6 +285,53 @@ MCE uses a **defense-in-depth** approach:
 
 7. **Domain Allowlist** — When `MCE_ALLOWED_DOMAINS` is set, requests to any hostname outside the list are rejected.
 
+### Credential Isolation from LLMs
+
+Your API keys, bearer tokens, and custom headers are **never exposed to any LLM** — not during compilation, not during execution. Here is exactly how credentials flow through the system:
+
+```
+.env / host environment
+  MCE_WEATHER_AUTH=Authorization: Bearer sk-secret
+  MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1
+          │
+          │  (1) vault.py reads credentials at execution time
+          ▼
+  CodeExecutor._run_in_docker()
+    build_all_server_env_vars(["weather"])
+          │
+          │  (2) passed as Docker -e flags — never written to code
+          ▼
+  docker run -e MCE_WEATHER_AUTH=... -e MCE_WEATHER_BASE_URL=...
+          │
+          │  (3) read from container environment at import time
+          ▼
+  compiled/weather/functions.py (inside sandbox)
+    _AUTH_HEADER = os.environ.get("MCE_WEATHER_AUTH", "")
+    _EXTRA_HEADERS = json.loads(os.environ.get("MCE_WEATHER_EXTRA_HEADERS", "{}"))
+```
+
+**What the LLM sees vs. what it never sees:**
+
+| Stage | LLM sees | LLM never sees |
+|---|---|---|
+| `execute_code` call | User code with `from weather.functions import ...` | Your API keys, base URLs, or any header values |
+| `--llm-enhance` compile step | Generated code with `os.environ["MCE_WEATHER_AUTH"]` placeholder strings | The actual resolved values of those variables |
+| `get_functions` response | Function signatures, parameter names, return schemas | Credentials, base URLs, or server internals |
+
+**The `--llm-enhance` flag specifically:**
+
+When `MCE_LLM_ENHANCE=true`, the compiler sends the generated `functions.py` source to an LLM to improve docstrings. The code it sends contains only `os.environ[...]` references — the real values are never loaded during compilation. The LLM prompt also explicitly instructs the model not to change any HTTP calls, URLs, or functional logic.
+
+**Practical checklist to keep credentials safe:**
+
+- Store secrets in `.env` or your system's environment — never in `config/swaggers.yaml` as literal values. Use `${VAR_NAME}` references instead:
+  ```yaml
+  auth_header: "Bearer ${MY_API_TOKEN}"   # safe — resolved at runtime
+  # auth_header: "Bearer sk-actual-secret" # unsafe — literal value
+  ```
+- Never pass credentials as arguments to `execute_code`. The LLM-generated code should only call the pre-built functions (e.g. `get_current_weather(city="London")`), which handle auth internally.
+- The generated `functions.py` files in `compiled/` contain only env var name references, not values — they are safe to inspect or commit.
+
 ## Development
 
 ```bash
