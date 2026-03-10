@@ -29,6 +29,7 @@ class ResponseField(BaseModel):
     name: str
     field_type: str
     description: str = ""
+    required: bool = True  # Whether this field is required per swagger "required" array
     nested: list[ResponseField] | None = None  # 1 level only
 
 
@@ -99,6 +100,7 @@ class FunctionInfo(BaseModel):
     description: str = ""
     parameters: list[ParamSchema] = Field(default_factory=list)
     response_fields: list[ResponseField] = Field(default_factory=list)
+    return_type: str = "Any"
     source_code: str
     method: str = ""
     path: str = ""
@@ -173,6 +175,7 @@ class EndpointManifest(BaseModel):
     path: str
     parameters_summary: str
     response_summary: str
+    return_type: str = "Any"
 
 
 class ServerManifest(BaseModel):

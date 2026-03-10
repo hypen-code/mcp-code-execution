@@ -20,7 +20,7 @@ MCE exposes **5 meta-tools + 1 prompt** instead of N API-specific tools:
 
 ```
 list_servers        → discover available APIs and their functions
-get_functions       → inspect 1–5 function signatures and return schemas (batch)
+get_functions       → inspect 1–5 function signatures, typed return classes, and response schemas (batch)
 execute_code        → run Python in a sandboxed Docker container
 get_cached_code     → search previously successful code snippets
 run_cached_code     → re-execute a cached snippet, optionally with new parameters
@@ -157,7 +157,7 @@ LLM → list_servers()
 ← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
 
 LLM → get_functions([{"server_name": "weather", "function_name": "get_current_weather"}])
-← { functions: [{ parameters: [...], response_fields: [...], import_statement: "from weather.functions import get_current_weather" }] }
+← { functions: [{ parameters: [...], return_type: "GetCurrentWeatherResponse", usage_example: "class GetCurrentWeatherResponse(TypedDict, total=False):\n    temperature: float\n    condition: str\n\ndef get_current_weather(city: str) -> GetCurrentWeatherResponse: ...", import_statement: "from weather.functions import get_current_weather" }] }
 
 LLM → execute_code("""
 from weather.functions import get_current_weather
@@ -177,6 +177,24 @@ LLM → run_cached_code("abc123", params={"city": "Paris"})
 > **`get_functions` must be called before writing any `execute_code` payload.** It returns the exact `import_statement`, parameter names, and response schema. Guessing will produce broken code.
 
 > **`execute_code` requires** either a `main()` function that returns the result, or a module-level `result` variable.
+
+### Typed Return Types
+
+At compile time, MCE parses each endpoint's swagger response schema and generates a `TypedDict` class that exactly describes the response fields and their Python types. The `get_functions` tool returns this class definition alongside the function signature in `usage_example`:
+
+```python
+# Returned by get_functions — ready to copy into execute_code
+class GetTreatmentCaseByIdResponse(TypedDict, total=False):
+    id: int
+    caseType: str
+    status: str
+    participants: list[Any]
+
+def get_treatment_case_by_id(id: int) -> GetTreatmentCaseByIdResponse:
+    ...
+```
+
+This lets LLMs write chained code with confidence — field names and types are explicit, not guessed. Functions without a parseable swagger response schema fall back to `-> Any`.
 
 ## Configuration
 

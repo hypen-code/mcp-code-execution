@@ -164,6 +164,7 @@ parameter names, types, or return structure.
                         "method": fn.method,
                         "path": fn.path,
                         "parameters": [p.model_dump() for p in fn.parameters],
+                        "return_type": fn.return_type,
                         "response_fields": [r.model_dump() for r in fn.response_fields],
                         "usage_example": fn.source_code,
                         "import_statement": f"from {server_name}.functions import {function_name}",

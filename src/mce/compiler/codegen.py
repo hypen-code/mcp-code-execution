@@ -156,6 +156,115 @@ def _safe_name(name: str) -> str:
     return sanitized or "param"
 
 
+def _safe_field_name(name: str) -> str:
+    """Make a field name safe for use as a Python identifier in a TypedDict.
+
+    Only escapes Python keywords and names starting with digits; preserves
+    camelCase so it matches the actual JSON response keys.
+
+    Args:
+        name: Raw field name from swagger schema.
+
+    Returns:
+        Safe Python identifier (appends underscore for keywords).
+    """
+    if not name or name[0].isdigit():
+        return f"f_{name}"
+    if keyword.iskeyword(name):
+        return f"{name}_"
+    return name
+
+
+def _to_pascal_case(snake: str) -> str:
+    """Convert snake_case identifier to PascalCase.
+
+    Args:
+        snake: Snake-case string (e.g. get_user_by_id).
+
+    Returns:
+        PascalCase string (e.g. GetUserById).
+    """
+    return "".join(word.capitalize() for word in snake.split("_"))
+
+
+def _build_typeddict_classes(endpoint: EndpointSpec) -> list[str]:
+    """Build TypedDict class definition strings for an endpoint's response schema.
+
+    Nested object fields produce separate TypedDict classes emitted first.
+
+    Args:
+        endpoint: Endpoint specification with response_schema.
+
+    Returns:
+        List of class definition strings, ready to inject into generated source.
+    """
+    schema = endpoint.response_schema
+    if not schema:
+        return []
+
+    pascal = _to_pascal_case(endpoint.operation_id)
+    classes: list[str] = []
+
+    # Detect array-of-items: single "items" field with nested structure
+    is_array = len(schema) == 1 and schema[0].name == "items" and schema[0].nested
+    fields = schema[0].nested if is_array else schema
+    base_name = f"{pascal}ResponseItem" if is_array else f"{pascal}Response"
+
+    if not fields:
+        return []
+
+    # Emit nested TypedDicts first (dependencies before parent)
+    for field in fields:
+        if field.field_type == "object" and field.nested:
+            nested_name = f"{base_name}{_to_pascal_case(field.name)}"
+            lines = [f"class {nested_name}(TypedDict, total=False):"]
+            for nf in field.nested:
+                py_type = _swagger_type_to_python(nf.field_type)
+                lines.append(f"    {_safe_field_name(nf.name)}: {py_type}")
+            classes.append("\n".join(lines))
+
+    # Emit the main TypedDict
+    lines = [f"class {base_name}(TypedDict, total=False):"]
+    for field in fields:
+        if field.field_type == "object" and field.nested:
+            nested_name = f"{base_name}{_to_pascal_case(field.name)}"
+            lines.append(f"    {_safe_field_name(field.name)}: {nested_name}")
+        else:
+            py_type = _swagger_type_to_python(field.field_type)
+            lines.append(f"    {_safe_field_name(field.name)}: {py_type}")
+    classes.append("\n".join(lines))
+
+    return classes
+
+
+def _build_return_type(endpoint: EndpointSpec) -> str:
+    """Determine the Python return type annotation for an endpoint.
+
+    Args:
+        endpoint: Endpoint specification with response_schema.
+
+    Returns:
+        Python type annotation string (e.g. 'GetUserByIdResponse', 'list[Any]', 'Any').
+    """
+    schema = endpoint.response_schema
+    if not schema:
+        return "Any"
+
+    pascal = _to_pascal_case(endpoint.operation_id)
+
+    # Array response
+    if len(schema) == 1 and schema[0].name == "items":
+        if schema[0].nested:
+            return f"list[{pascal}ResponseItem]"
+        return "list[Any]"
+
+    # Object response with fields
+    if schema:
+        return f"{pascal}Response"
+
+    return "dict[str, Any]"
+
+
 def _build_docstring_args(endpoint: EndpointSpec) -> list[dict[str, Any]]:
     """Build argument list for docstring template rendering.
 
@@ -259,4 +368,6 @@ class CodeGenerator:
             "response_fields": [r.name for r in endpoint.response_schema],
             "has_query_params": any(p.location == "query" for p in endpoint.parameters),
             "base_url": endpoint.base_url,
+            "return_type": _build_return_type(endpoint),
+            "typeddict_classes": _build_typeddict_classes(endpoint),
         }
