@@ -220,6 +220,19 @@ parameter names, types, or return structure.
         Run multiple functions in single code block and return result.
         Returns execution result with data or error details.
         Keep responses minimal — extract only the fields you need.
+
+        ## Reusable Code Guide (follow every time)
+
+        1. CHECK CACHE FIRST: call get_cached_code(search=<topic>) before writing new code.
+           If a match exists, use run_cached_code(id, params={...}) with only changed values.
+        2. PARAMETERIZE: every dynamic value must be a top-level variable
+           (e.g. `city = 'London'`), never hardcoded inside main().
+        3. STRUCTURE: imports → top-level param vars → def main() (reads those vars)
+           → return only the fields needed.
+        4. DESCRIPTION: use the pattern "action + entity + key param"
+           (e.g. "get weather by city"). Never include specific values or dates.
+        5. REUSE: run_cached_code(id, params={"city": "Tokyo"}) overrides any
+           top-level variable by name — no need to rewrite the code.
         """
         try:
             result = await executor.execute(code, description)
