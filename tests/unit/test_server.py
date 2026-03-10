@@ -17,7 +17,7 @@ from mce.errors import (
     SecurityViolationError,
     ServerNotFoundError,
 )
-from mce.models import CacheSummary, ExecutionResult
+from mce.models import ExecutionResult
 from mce.runtime.cache import CacheStore
 from mce.runtime.registry import Registry
 from mce.server import create_server, initialize_server
@@ -364,70 +364,6 @@ async def test_execute_code_unexpected_error(tmp_path: Path) -> None:
         result = await _call_tool(mcp, "execute_code", code="x = 1", description="oops")
 
     assert result["success"] is False
-    assert result["error_type"] == "internal"
-
-
-# ---------------------------------------------------------------------------
-# get_cached_code tool
-# ---------------------------------------------------------------------------
-
-
-async def test_get_cached_code_returns_entries(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    registry = _make_mock_registry()
-    cache = _make_mock_cache()
-    cache.search = AsyncMock(
-        return_value=[
-            CacheSummary(
-                id="abc123",
-                description="weather query",
-                servers_used=["weather"],
-                use_count=2,
-                created_at=1000000.0,
-            )
-        ]
-    )
-    mcp = create_server(config, registry=registry, cache=cache)
-
-    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
-    assert "cached_entries" in result
-    assert len(result["cached_entries"]) == 1
-    assert result["cached_entries"][0]["id"] == "abc123"
-
-
-async def test_get_cached_code_with_search_term(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    registry = _make_mock_registry()
-    cache = _make_mock_cache()
-    cache.search = AsyncMock(return_value=[])
-    mcp = create_server(config, registry=registry, cache=cache)
-
-    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search="hotel"))
-    cache.search.assert_awaited_once_with("hotel")
-    assert result["cached_entries"] == []
-
-
-async def test_get_cached_code_cache_error(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    registry = _make_mock_registry()
-    cache = _make_mock_cache()
-    cache.search = AsyncMock(side_effect=CacheError("DB error"))
-    mcp = create_server(config, registry=registry, cache=cache)
-
-    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
-    assert "error" in result
-    assert result["error_type"] == "cache"
-
-
-async def test_get_cached_code_unexpected_error(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    registry = _make_mock_registry()
-    cache = _make_mock_cache()
-    cache.search = AsyncMock(side_effect=RuntimeError("unexpected"))
-    mcp = create_server(config, registry=registry, cache=cache)
-
-    result = _toon_decode(await _call_tool(mcp, "get_cached_code", search=None))
-    assert "error" in result
     assert result["error_type"] == "internal"
 
 

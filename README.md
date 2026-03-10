@@ -16,19 +16,18 @@
 
 ## The Solution
 
-MCE exposes **5 meta-tools + 1 prompt** instead of N API-specific tools:
+MCE exposes **4 meta-tools + 1 prompt** instead of N API-specific tools:
 
 ```
 list_servers        → discover available APIs and their functions
 get_functions       → inspect 1–5 function signatures, typed return classes, and response schemas (batch)
-execute_code        → run Python in a sandboxed Docker container
-get_cached_code     → search previously successful code snippets
-run_cached_code     → re-execute a cached snippet, optionally with new parameters
+execute_code        → run Python in a sandboxed Docker container; returns a cache_id on success
+run_cached_code     → SIMD: re-run the same cached code with different input data
 
 reusable_code_guide → prompt: concise rules for writing parameterized, cacheable code
 ```
 
-The LLM workflow: **discover → inspect → generate → execute → cache → reuse**
+The LLM workflow: **discover → inspect → execute → reuse (SIMD)**
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -46,9 +45,9 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
-│  │           5 MCP Tools (exposed to LLM)         │  │
+│  │           4 MCP Tools (exposed to LLM)         │  │
 │  │  list_servers | get_functions | execute_code   │  │
-│  │  get_cached_code | run_cached_code             │  │
+│  │  run_cached_code                               │  │
 │  └───────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
          │                            │
@@ -154,29 +153,44 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 
 ```
 LLM → list_servers()
-← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
+← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [...] }] }
 
 LLM → get_functions([{"server_name": "weather", "function_name": "get_current_weather"}])
-← { functions: [{ parameters: [...], return_type: "GetCurrentWeatherResponse", usage_example: "class GetCurrentWeatherResponse(TypedDict, total=False):\n    temperature: float\n    condition: str\n\ndef get_current_weather(city: str) -> GetCurrentWeatherResponse: ...", import_statement: "from weather.functions import get_current_weather" }] }
+← { functions: [{ parameters: [...], import_statement: "from weather.functions import get_current_weather", ... }] }
 
 LLM → execute_code("""
 from weather.functions import get_current_weather
 
+city = "London"           # top-level variable — the only thing that changes per request
+
 def main():
-    return get_current_weather(city="London", units="metric")
-""", description="Get London weather")
+    return get_current_weather(city=city, units="metric")
+
+result = main()
+""", description="get weather by city")
 ← { success: true, data: { temperature: 15.2, condition: "Cloudy" }, cache_id: "abc123" }
+```
 
-LLM → get_cached_code(search="weather")
-← { cached_entries: [{ id: "abc123", description: "Get London weather", use_count: 1 }] }
+### SIMD — Single Instruction, Multiple Data
 
+`run_cached_code` is the SIMD pattern: the same code runs unchanged, only the input data varies.
+The `cache_id` from any successful `execute_code` response is reused directly — no rewriting, no re-inspecting functions.
+
+```
+# User asks for Paris weather — city is the only thing that changes
 LLM → run_cached_code("abc123", params={"city": "Paris"})
 ← { success: true, data: { temperature: 18.5, condition: "Sunny" }, cache_id: "def456" }
+
+# And again for Tokyo
+LLM → run_cached_code("abc123", params={"city": "Tokyo"})
+← { success: true, data: { temperature: 12.0, condition: "Clear" }, cache_id: "ghi789" }
 ```
+
+For this to work, all dynamic values in `execute_code` must be **top-level variables** that `main()` reads as globals — never hardcoded inside `main()`.
 
 > **`get_functions` must be called before writing any `execute_code` payload.** It returns the exact `import_statement`, parameter names, and response schema. Guessing will produce broken code.
 
-> **`execute_code` requires** either a `main()` function that returns the result, or a module-level `result` variable.
+> **`execute_code` requires** a `main()` function (no arguments) that reads top-level variables, plus `result = main()` at module level.
 
 ### Typed Return Types
 
