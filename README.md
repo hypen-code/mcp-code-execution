@@ -118,6 +118,10 @@ mce serve --transport http --port 8000
 
 # Compile + serve in one command
 mce run
+
+# Use a custom .env file (works with all subcommands)
+mce serve --env-file /path/to/.env.production
+mce run --env-file /path/to/.env.staging
 ```
 
 ### 6. Connect to Your MCP Client
@@ -175,6 +179,19 @@ LLM → run_cached_code("abc123", params={"city": "Paris"})
 > **`execute_code` requires** either a `main()` function that returns the result, or a module-level `result` variable.
 
 ## Configuration
+
+### Custom `.env` File
+
+By default, MCE loads `.env` from the current working directory. You can override this with the `--env-file` flag on any subcommand:
+
+```bash
+mce compile --env-file /path/to/.env.production
+mce serve   --env-file /path/to/.env.staging
+mce run     --env-file /path/to/.env.local
+mce clean   --env-file /path/to/.env.local
+```
+
+Explicit environment variables always take precedence over values in the `.env` file.
 
 ### Environment Variables
 
