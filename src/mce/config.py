@@ -58,10 +58,15 @@ class MCEConfig(BaseSettings):
     max_code_size_bytes: int = 65_536  # 64KB
 
 
-def load_config() -> MCEConfig:
+def load_config(env_file: str | None = None) -> MCEConfig:
     """Load and return the MCE configuration.
+
+    Args:
+        env_file: Optional path to a custom .env file. Overrides the default CWD/.env.
 
     Returns:
         Populated MCEConfig instance.
     """
+    if env_file is not None:
+        return MCEConfig(_env_file=env_file)  # type: ignore[call-arg]
     return MCEConfig()

@@ -22,6 +22,12 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="mce",
         description="MCE — MCP Code Execution: Turn any Swagger into LLM-native functions",
     )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        metavar="PATH",
+        help="Path to a custom .env file (default: .env in current directory)",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # clean subcommand
@@ -100,7 +106,7 @@ async def _cmd_clean(args: argparse.Namespace) -> int:
     """
     import shutil  # noqa: PLC0415
 
-    config = load_config()
+    config = load_config(getattr(args, "env_file", None))
     compiled_dir = config.compiled_output_dir
 
     if compiled_dir and __import__("pathlib").Path(compiled_dir).exists():
@@ -126,7 +132,7 @@ async def _cmd_compile(args: argparse.Namespace) -> int:
     """
     from mce.compiler.orchestrator import Orchestrator  # noqa: PLC0415
 
-    config = load_config()
+    config = load_config(getattr(args, "env_file", None))
     orchestrator = Orchestrator(config)
     logger = get_logger(__name__)
 
@@ -172,7 +178,7 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     from mce.runtime.registry import Registry  # noqa: PLC0415
     from mce.server import create_server  # noqa: PLC0415
 
-    config = load_config()
+    config = load_config(getattr(config_args, "env_file", None))
     logger = get_logger(__name__)
 
     if config_args.host:
@@ -220,7 +226,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     """
     from mce.compiler.orchestrator import Orchestrator  # noqa: PLC0415
 
-    config = load_config()
+    config = load_config(getattr(args, "env_file", None))
     orchestrator = Orchestrator(config)
 
     result = await orchestrator.compile_all()
@@ -233,16 +239,17 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """CLI entry point invoked by `mce` script or `python -m mce`."""
-    # Load .env into os.environ early so vault.py can read server credentials.
-    # override=False means explicit env vars always win over .env values.
-    load_dotenv(str(_ENV_FILE), override=False)
-
     parser = _build_parser()
     args = parser.parse_args()
 
+    # Load .env into os.environ early so vault.py can read server credentials.
+    # override=False means explicit env vars always win over .env values.
+    env_file_path = args.env_file if args.env_file else str(_ENV_FILE)
+    load_dotenv(env_file_path, override=False)
+
     # Load config early for log level
     try:
-        config = load_config()
+        config = load_config(args.env_file)
         setup_logging(config.log_level)
     except Exception:  # noqa: BLE001
         setup_logging("INFO")
