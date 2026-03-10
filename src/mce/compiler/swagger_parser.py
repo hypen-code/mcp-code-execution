@@ -389,7 +389,9 @@ class SwaggerParser:
         """
         content = response.get("content", {})
         # Prefer application/json; fall back to */* or first available content type
-        json_content = content.get("application/json") or content.get("*/*") or next(iter(content.values()), {})
+        json_content: dict[str, Any] = (
+            content.get("application/json") or content.get("*/*") or next(iter(content.values()), {})
+        )
         json_schema = json_content.get("schema", {})
 
         if "$ref" in json_schema:
