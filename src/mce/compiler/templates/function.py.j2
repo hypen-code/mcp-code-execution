@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.parse
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 
@@ -74,10 +74,18 @@ def _request(
         return r.text
 
 
+# --- Response Types ---
+
+{% for fn in functions %}
+{% for cls_def in fn.typeddict_classes %}
+{{ cls_def }}
+
+{% endfor %}
+{% endfor %}
 # --- API Functions ---
 
 {% for fn in functions %}
-def {{ fn.name }}({{ fn.signature }}) -> Any:
+def {{ fn.name }}({{ fn.signature }}) -> {{ fn.return_type }}:
     """{{ fn.summary }}
 
     {% if fn.description and fn.description != fn.summary %}

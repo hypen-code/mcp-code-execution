@@ -112,6 +112,7 @@ class Registry:
             summary=endpoint.summary,
             parameters=parameters,
             response_fields=response_fields,
+            return_type=endpoint.return_type,
             source_code=source_code,
             method=endpoint.method,
             path=endpoint.path,
@@ -214,14 +215,15 @@ class Registry:
         return snippet
 
     def _extract_function_snippet(self, source: str, function_name: str) -> str:
-        """Extract a single function definition from a Python source file.
+        """Extract a function definition and its associated TypedDict classes from a Python source file.
 
         Args:
             source: Full Python source file content.
             function_name: Name of function to extract.
 
         Returns:
-            Extracted function source, or full source on failure.
+            TypedDict class definitions (if any) followed by the function source,
+            or full source on failure.
         """
         import ast  # noqa: PLC0415
 
@@ -230,14 +232,30 @@ class Registry:
         except SyntaxError:
             return source
 
+        lines = source.splitlines()
+
+        # Derive the PascalCase prefix used for TypedDict class names
+        pascal_prefix = "".join(word.capitalize() for word in function_name.split("_"))
+
+        # Collect TypedDict classes whose names match this function's response types
+        class_snippets: list[str] = []
+        func_snippet: str | None = None
+
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == function_name:
-                lines = source.splitlines()
+            if isinstance(node, ast.ClassDef) and node.name.startswith(pascal_prefix):
                 start = node.lineno - 1
                 end = node.end_lineno or (start + 1)
-                return "\n".join(lines[start:end])
+                class_snippets.append("\n".join(lines[start:end]))
+            elif isinstance(node, ast.FunctionDef) and node.name == function_name:
+                start = node.lineno - 1
+                end = node.end_lineno or (start + 1)
+                func_snippet = "\n".join(lines[start:end])
 
-        return source  # Fallback to full source
+        if func_snippet is None:
+            return source  # Fallback to full source
+
+        parts = class_snippets + [func_snippet]
+        return "\n\n".join(parts)
 
     def _parse_parameters_summary(self, summary: str) -> list[ParamSchema]:
         """Parse the human-readable parameters_summary string into ParamSchema objects.

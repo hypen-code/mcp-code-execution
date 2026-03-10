@@ -16,19 +16,18 @@
 
 ## The Solution
 
-MCE exposes **5 meta-tools + 1 prompt** instead of N API-specific tools:
+MCE exposes **4 meta-tools + 1 prompt** instead of N API-specific tools:
 
 ```
 list_servers        → discover available APIs and their functions
-get_functions       → inspect 1–5 function signatures and return schemas (batch)
-execute_code        → run Python in a sandboxed Docker container
-get_cached_code     → search previously successful code snippets
-run_cached_code     → re-execute a cached snippet, optionally with new parameters
+get_functions       → inspect 1–5 function signatures, typed return classes, and response schemas (batch)
+execute_code        → run Python in a sandboxed Docker container; returns a cache_id on success
+run_cached_code     → SIMD: re-run the same cached code with different input data
 
 reusable_code_guide → prompt: concise rules for writing parameterized, cacheable code
 ```
 
-The LLM workflow: **discover → inspect → generate → execute → cache → reuse**
+The LLM workflow: **discover → inspect → execute → reuse (SIMD)**
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -46,9 +45,9 @@ The LLM workflow: **discover → inspect → generate → execute → cache → 
 │  └───────────────────────────────────────────────┘  │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
-│  │           5 MCP Tools (exposed to LLM)         │  │
+│  │           4 MCP Tools (exposed to LLM)         │  │
 │  │  list_servers | get_functions | execute_code   │  │
-│  │  get_cached_code | run_cached_code             │  │
+│  │  run_cached_code                               │  │
 │  └───────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
          │                            │
@@ -154,29 +153,62 @@ Add to your `mcp_servers.json` (Claude Desktop example):
 
 ```
 LLM → list_servers()
-← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [{ name: "get_current_weather", summary: "..." }] }] }
+← { sandbox_libraries: [...], servers: [{ name: "weather", functions: [...] }] }
 
 LLM → get_functions([{"server_name": "weather", "function_name": "get_current_weather"}])
-← { functions: [{ parameters: [...], response_fields: [...], import_statement: "from weather.functions import get_current_weather" }] }
+← { functions: [{ parameters: [...], import_statement: "from weather.functions import get_current_weather", ... }] }
 
 LLM → execute_code("""
 from weather.functions import get_current_weather
 
+city = "London"           # top-level variable — the only thing that changes per request
+
 def main():
-    return get_current_weather(city="London", units="metric")
-""", description="Get London weather")
+    return get_current_weather(city=city, units="metric")
+
+result = main()
+""", description="get weather by city")
 ← { success: true, data: { temperature: 15.2, condition: "Cloudy" }, cache_id: "abc123" }
+```
 
-LLM → get_cached_code(search="weather")
-← { cached_entries: [{ id: "abc123", description: "Get London weather", use_count: 1 }] }
+### SIMD — Single Instruction, Multiple Data
 
+`run_cached_code` is the SIMD pattern: the same code runs unchanged, only the input data varies.
+The `cache_id` from any successful `execute_code` response is reused directly — no rewriting, no re-inspecting functions.
+
+```
+# User asks for Paris weather — city is the only thing that changes
 LLM → run_cached_code("abc123", params={"city": "Paris"})
 ← { success: true, data: { temperature: 18.5, condition: "Sunny" }, cache_id: "def456" }
+
+# And again for Tokyo
+LLM → run_cached_code("abc123", params={"city": "Tokyo"})
+← { success: true, data: { temperature: 12.0, condition: "Clear" }, cache_id: "ghi789" }
 ```
+
+For this to work, all dynamic values in `execute_code` must be **top-level variables** that `main()` reads as globals — never hardcoded inside `main()`.
 
 > **`get_functions` must be called before writing any `execute_code` payload.** It returns the exact `import_statement`, parameter names, and response schema. Guessing will produce broken code.
 
-> **`execute_code` requires** either a `main()` function that returns the result, or a module-level `result` variable.
+> **`execute_code` requires** a `main()` function (no arguments) that reads top-level variables, plus `result = main()` at module level.
+
+### Typed Return Types
+
+At compile time, MCE parses each endpoint's swagger response schema and generates a `TypedDict` class that exactly describes the response fields and their Python types. The `get_functions` tool returns this class definition alongside the function signature in `usage_example`:
+
+```python
+# Returned by get_functions — ready to copy into execute_code
+class GetTreatmentCaseByIdResponse(TypedDict, total=False):
+    id: int
+    caseType: str
+    status: str
+    participants: list[Any]
+
+def get_treatment_case_by_id(id: int) -> GetTreatmentCaseByIdResponse:
+    ...
+```
+
+This lets LLMs write chained code with confidence — field names and types are explicit, not guessed. Functions without a parseable swagger response schema fall back to `-> Any`.
 
 ## Configuration
 
@@ -284,6 +316,53 @@ MCE uses a **defense-in-depth** approach:
 6. **Read-Only Enforcement** — Servers marked `is_read_only: true` have POST/PUT/PATCH/DELETE endpoints excluded at compile time.
 
 7. **Domain Allowlist** — When `MCE_ALLOWED_DOMAINS` is set, requests to any hostname outside the list are rejected.
+
+### Credential Isolation from LLMs
+
+Your API keys, bearer tokens, and custom headers are **never exposed to any LLM** — not during compilation, not during execution. Here is exactly how credentials flow through the system:
+
+```
+.env / host environment
+  MCE_WEATHER_AUTH=Authorization: Bearer sk-secret
+  MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1
+          │
+          │  (1) vault.py reads credentials at execution time
+          ▼
+  CodeExecutor._run_in_docker()
+    build_all_server_env_vars(["weather"])
+          │
+          │  (2) passed as Docker -e flags — never written to code
+          ▼
+  docker run -e MCE_WEATHER_AUTH=... -e MCE_WEATHER_BASE_URL=...
+          │
+          │  (3) read from container environment at import time
+          ▼
+  compiled/weather/functions.py (inside sandbox)
+    _AUTH_HEADER = os.environ.get("MCE_WEATHER_AUTH", "")
+    _EXTRA_HEADERS = json.loads(os.environ.get("MCE_WEATHER_EXTRA_HEADERS", "{}"))
+```
+
+**What the LLM sees vs. what it never sees:**
+
+| Stage | LLM sees | LLM never sees |
+|---|---|---|
+| `execute_code` call | User code with `from weather.functions import ...` | Your API keys, base URLs, or any header values |
+| `--llm-enhance` compile step | Generated code with `os.environ["MCE_WEATHER_AUTH"]` placeholder strings | The actual resolved values of those variables |
+| `get_functions` response | Function signatures, parameter names, return schemas | Credentials, base URLs, or server internals |
+
+**The `--llm-enhance` flag specifically:**
+
+When `MCE_LLM_ENHANCE=true`, the compiler sends the generated `functions.py` source to an LLM to improve docstrings. The code it sends contains only `os.environ[...]` references — the real values are never loaded during compilation. The LLM prompt also explicitly instructs the model not to change any HTTP calls, URLs, or functional logic.
+
+**Practical checklist to keep credentials safe:**
+
+- Store secrets in `.env` or your system's environment — never in `config/swaggers.yaml` as literal values. Use `${VAR_NAME}` references instead:
+  ```yaml
+  auth_header: "Bearer ${MY_API_TOKEN}"   # safe — resolved at runtime
+  # auth_header: "Bearer sk-actual-secret" # unsafe — literal value
+  ```
+- Never pass credentials as arguments to `execute_code`. The LLM-generated code should only call the pre-built functions (e.g. `get_current_weather(city="London")`), which handle auth internally.
+- The generated `functions.py` files in `compiled/` contain only env var name references, not values — they are safe to inspect or commit.
 
 ## Development
 

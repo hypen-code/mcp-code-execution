@@ -49,33 +49,35 @@ def create_server(
 # MCE — MCP Code Execution: Usage Guide
 
 ## MANDATORY RULE
-**You MUST call `get_functions` before using any server function in code.**
-Never write `from <server>.functions import <fn>` without first calling
-`get_functions` for that function in the same session. Skipping this step
-will produce incorrect or broken code because you will not know the exact
-parameter names, types, or return structure.
+
+**`get_functions` BEFORE writing code** — You MUST call `get_functions` before
+using any server function. Never write `from <server>.functions import <fn>`
+without first calling `get_functions` in the same session.
 
 ## Workflow (follow in order)
 
 1. **`list_servers`** — Discover available API servers and their function names.
-   Call this once at the start to see what is available.
 
 2. **`get_functions`** — Fetch the signature, parameters, and return schema for
-   1–5 functions at once. You MUST do this before writing any code that calls
-   those functions. The response includes a ready-to-use `import_statement`.
+   1–5 functions at once. The response includes a ready-to-use `import_statement`.
 
 3. **`execute_code`** — Run Python code in a sandboxed Docker container.
    - Use the exact `import_statement` from `get_functions`.
-   - Code must define a `main()` function OR set a `result` variable.
-   - Only use parameters and fields you confirmed via `get_functions`.
+   - Every dynamic value (city, ID, date, name…) MUST be a top-level variable.
+   - `main()` takes NO arguments — it reads those top-level variables as globals.
+   - NEVER hardcode any entity or value inside `main()`.
+   - The response includes a `cache_id` — you MUST remember it for reuse.
 
-4. **`get_cached_code`** / **`run_cached_code`** — Find and re-run previously
-   successful executions. Use this to avoid repeating work.
+4. **`run_cached_code`** — Use this whenever the user asks for the same type of
+   operation with a different value (different city, different ID, different date…).
+   NEVER call `execute_code` again for the same operation type. Pass only the
+   changed top-level variable(s) as `params`.
 
 ## Rules
 
 - NEVER guess function signatures. Always call `get_functions` first.
 - NEVER import a server module without the `import_statement` from `get_functions`.
+- NEVER call `execute_code` when a `cache_id` for the same operation is in context.
 - Keep `execute_code` payloads minimal — extract only the fields you need.
 - If execution fails, re-read the `get_functions` output before retrying.
 """,
@@ -164,6 +166,7 @@ parameter names, types, or return structure.
                         "method": fn.method,
                         "path": fn.path,
                         "parameters": [p.model_dump() for p in fn.parameters],
+                        "return_type": fn.return_type,
                         "response_fields": [r.model_dump() for r in fn.response_fields],
                         "usage_example": fn.source_code,
                         "import_statement": f"from {server_name}.functions import {function_name}",
@@ -219,6 +222,29 @@ parameter names, types, or return structure.
         Run multiple functions in single code block and return result.
         Returns execution result with data or error details.
         Keep responses minimal — extract only the fields you need.
+
+        ## Reusable Code Guide
+
+        WRONG — hardcoded value inside main(), not reusable:
+            def main():
+                return geocoding_search(name="Colombo, Sri Lanka")  # BAD
+
+        CORRECT — top-level variable, reusable via run_cached_code:
+            location_name = "Colombo, Sri Lanka"   # top-level param
+
+            def main():
+                return geocoding_search(name=location_name)  # reads global
+
+            result = main()
+
+        After execute_code succeeds, the response contains a `cache_id`.
+        For the next request of the same type with a different value:
+            run_cached_code(cache_id, params={"location_name": "Galle, Sri Lanka"})
+
+        Rules:
+        - ALL dynamic values (city, ID, date, name…) → top-level variables
+        - main() NEVER takes arguments; it reads globals only
+        - description: "action + entity + key param", no specific values or dates
         """
         try:
             result = await executor.execute(code, description)
@@ -246,41 +272,6 @@ parameter names, types, or return structure.
             return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
 
     @mcp.tool()
-    async def get_cached_code(search: str | None = None) -> str:
-        """List previously executed code that succeeded and is cached for reuse.
-
-        Args:
-            search: Optional search term to filter by description.
-
-        Returns list of cached code entries with ID, description, and usage count.
-        You can re-execute cached code by passing its ID to execute_code.
-        """
-        try:
-            entries = await cache.search(search)
-            logger.info("tool_get_cached_code_called", search=search, results=len(entries))
-            return str(
-                _toon_encode(
-                    {
-                        "cached_entries": [
-                            {
-                                "id": e.id,
-                                "description": e.description,
-                                "servers_used": e.servers_used,
-                                "use_count": e.use_count,
-                                "created_at": e.created_at,
-                            }
-                            for e in entries
-                        ]
-                    }
-                )
-            )
-        except CacheError as exc:
-            return str(_toon_encode({"error": f"Cache unavailable: {exc}", "error_type": "cache"}))
-        except Exception:  # noqa: BLE001
-            logger.exception("get_cached_code_unexpected_error")
-            return str(_toon_encode({"error": "Internal error", "error_type": "internal"}))
-
-    @mcp.tool()
     async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Re-execute a cached code snippet, optionally injecting new parameter values.
 
@@ -301,7 +292,7 @@ parameter names, types, or return structure.
             fmt = _params.get("output_format", "json")
 
         Args:
-            cache_id: Cache entry ID from get_cached_code.
+            cache_id: Cache entry ID from a previous execute_code response.
             params: Optional key→value overrides injected as top-level variables.
 
         Returns:
@@ -322,10 +313,11 @@ parameter names, types, or return structure.
         code = entry.code
         if params:
             # Append AFTER the cached code so param values override any
-            # same-named variable the code sets at module level. Functions
-            # defined in the code read globals, so they pick up these values.
+            # same-named variable the code sets at module level, then re-call
+            # main() so it reads the updated globals and produces a fresh result.
             param_lines = "\n".join(f"{k} = {v!r}" for k, v in params.items())
-            code = f"{code}\n\n# --- injected parameter overrides ---\n_params = {params!r}\n{param_lines}\n"
+            rerun = "try:\n    result = main()\nexcept NameError:\n    pass"
+            code = f"{code}\n\n# --- injected parameter overrides ---\n_params = {params!r}\n{param_lines}\n{rerun}\n"
 
         logger.info("tool_run_cached_code_called", cache_id=cache_id[:16], has_params=bool(params))
 
@@ -357,16 +349,18 @@ parameter names, types, or return structure.
     def reusable_code_guide() -> str:
         """Guide for writing reusable, cacheable execute_code payloads."""
         return (
-            "1. CHECK CACHE FIRST: get_cached_code(search=<topic>) — if found, "
-            "run_cached_code(id, params={...}) with only changed values. Skip steps 2-4.\n"
-            "2. PARAMETERIZE: every dynamic value must be a top-level variable "
-            "(city='London'), never hardcoded inside main().\n"
-            "3. STRUCTURE: imports → top-level param vars → def main(): (reads those vars) "
-            "→ return only needed fields.\n"
-            "4. DESCRIPTION: action + entity + key param — e.g. 'get weather by city'. "
-            "No dates, no specific values.\n"
-            "5. REUSE: run_cached_code(id, params={'city': 'Tokyo'}) overrides any "
-            "top-level variable by name."
+            "WRONG — hardcoded inside main():\n"
+            "    def main(): return fn(name='Colombo')  # BAD\n\n"
+            "CORRECT — top-level variable:\n"
+            "    location_name = 'Colombo'\n"
+            "    def main(): return fn(name=location_name)  # reads global\n"
+            "    result = main()\n\n"
+            "After execute_code, remember the cache_id. Next request of the same type:\n"
+            "    run_cached_code(cache_id, params={'location_name': 'Galle'})\n\n"
+            "Rules:\n"
+            "- ALL dynamic values → top-level variables\n"
+            "- main() NEVER takes arguments\n"
+            "- description: 'action + entity + key param', no specific values"
         )
 
     return mcp

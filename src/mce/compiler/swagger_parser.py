@@ -388,7 +388,11 @@ class SwaggerParser:
             List of ResponseField objects.
         """
         content = response.get("content", {})
-        json_schema = content.get("application/json", {}).get("schema", {})
+        # Prefer application/json; fall back to */* or first available content type
+        json_content: dict[str, Any] = (
+            content.get("application/json") or content.get("*/*") or next(iter(content.values()), {})
+        )
+        json_schema = json_content.get("schema", {})
 
         if "$ref" in json_schema:
             resolved = self._resolve_ref(json_schema["$ref"])
@@ -417,6 +421,7 @@ class SwaggerParser:
 
         if schema_type == "object" or "properties" in schema:
             props: dict[str, Any] = schema.get("properties", {})
+            required_set: set[str] = set(schema.get("required", []))
             for prop_name, prop_schema in props.items():
                 if "$ref" in prop_schema:
                     resolved = self._resolve_ref(prop_schema["$ref"])
@@ -433,6 +438,7 @@ class SwaggerParser:
                         name=prop_name,
                         field_type=field_type,
                         description=str(prop_schema.get("description", "")),
+                        required=prop_name in required_set,
                         nested=nested,
                     )
                 )

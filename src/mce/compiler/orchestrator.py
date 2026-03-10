@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from mce.compiler.codegen import CodeGenerator
+from mce.compiler.codegen import CodeGenerator, _build_return_type
 from mce.compiler.swagger_parser import SwaggerParser
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
@@ -252,6 +252,7 @@ class Orchestrator:
                     f"{p.name} ({p.param_type}, {'required' if p.required else 'optional'})" for p in ep.parameters
                 ),
                 response_summary=", ".join(r.name for r in ep.response_schema) or "response data",
+                return_type=_build_return_type(ep),
             )
             for ep in spec.endpoints
         ]
