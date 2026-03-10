@@ -342,6 +342,8 @@ class Orchestrator:
             env[f"MCE_{env_prefix}_BASE_URL"] = src.base_url
             if src.auth_header:
                 env[f"MCE_{env_prefix}_AUTH"] = src.auth_header
+            if src.extra_headers:
+                env[f"MCE_{env_prefix}_EXTRA_HEADERS"] = json.dumps(src.extra_headers)
 
         mcp_config = {
             "mcpServers": {

@@ -1,4 +1,4 @@
-"""MCE FastMCP3 server — registers the 4 MCP tools exposed to LLMs."""
+"""MCE FastMCP server — registers the 5 MCP tools and 1 prompt exposed to LLMs."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def create_server(
     registry: Registry | None = None,
     cache: CacheStore | None = None,
 ) -> FastMCP:
-    """Create and configure the MCE FastMCP server with all 4 tools.
+    """Create and configure the MCE FastMCP server with all 5 tools and 1 prompt.
 
     Args:
         config: MCE configuration instance.
@@ -352,6 +352,22 @@ parameter names, types, or return structure.
         except Exception:  # noqa: BLE001
             logger.exception("run_cached_code_unexpected_error")
             return {"success": False, "error": "Internal error occurred", "error_type": "internal"}
+
+    @mcp.prompt()
+    def reusable_code_guide() -> str:
+        """Guide for writing reusable, cacheable execute_code payloads."""
+        return (
+            "1. CHECK CACHE FIRST: get_cached_code(search=<topic>) — if found, "
+            "run_cached_code(id, params={...}) with only changed values. Skip steps 2-4.\n"
+            "2. PARAMETERIZE: every dynamic value must be a top-level variable "
+            "(city='London'), never hardcoded inside main().\n"
+            "3. STRUCTURE: imports → top-level param vars → def main(): (reads those vars) "
+            "→ return only needed fields.\n"
+            "4. DESCRIPTION: action + entity + key param — e.g. 'get weather by city'. "
+            "No dates, no specific values.\n"
+            "5. REUSE: run_cached_code(id, params={'city': 'Tokyo'}) overrides any "
+            "top-level variable by name."
+        )
 
     return mcp
 
