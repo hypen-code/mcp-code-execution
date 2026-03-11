@@ -39,13 +39,13 @@ flowchart TB
     subgraph MCE["MCE MCP Server"]
         direction TB
         subgraph Components["Components"]
-            Compiler["Compiler\n(setup)"]:::component
-            Runtime["Runtime\n(serve)"]:::component
-            Executor["Code Executor\n(Docker SDK)"]:::component
+            Compiler["Compiler (setup)"]:::component
+            Runtime["Runtime (serve)"]:::component
+            Executor["Code Executor (Docker SDK)"]:::component
         end
 
         subgraph Core["Core Services"]
-            CS["SwaggerParser | FunctionRegistry | CacheStore\nSecurityGuard | CredentialVault"]:::core
+            CS["SwaggerParser | FunctionRegistry | CacheStore | SecurityGuard | CredentialVault"]:::core
         end
 
         subgraph Tools["4 MCP Tools — exposed to LLM"]
@@ -57,8 +57,8 @@ flowchart TB
         Executor --> CS
     end
 
-    MCE --> Swagger["Swagger\nSources"]:::external
-    MCE --> Docker["python:3.13-slim\nDocker Container"]:::external
+    MCE --> Swagger["Swagger Sources"]:::external
+    MCE --> Docker["python:3.13-slim Docker Container"]:::external
 ```
 
 ## Quick Start
@@ -331,14 +331,14 @@ flowchart TD
     classDef dockerNode fill:#1a2a3a,stroke:#f0a040,stroke-width:2px,color:#fff4e0
     classDef sandboxNode fill:#1a3a2a,stroke:#4caf82,stroke-width:2px,color:#d0ffe8
 
-    ENV[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret\nMCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]:::envNode
+    ENV[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]:::envNode
     VAULT["CodeExecutor._run_in_docker()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
     DOCKER["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
-    SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;)\n_EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
+    SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;) _EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
 
-    ENV    -->|"(1) vault.py reads credentials at execution time"|   VAULT
-    VAULT  -->|"(2) passed as Docker -e flags — never written to code"| DOCKER
-    DOCKER -->|"(3) read from container environment at import time"|  SANDBOX
+    ENV    -->|"1: vault.py reads credentials at execution time"| VAULT
+    VAULT  -->|"2: passed as Docker -e flags, never written to code"| DOCKER
+    DOCKER -->|"3: read from container environment at import time"| SANDBOX
 ```
 
 **What the LLM sees vs. what it never sees:**
