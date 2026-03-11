@@ -6,28 +6,16 @@ MCE uses a **defense-in-depth** approach: multiple independent layers, each of w
 
 ## Layers at a Glance
 
-```
-User code submitted via execute_code
-          │
-          ▼
- 1. Code Size Limit          ← reject before any parsing
-          │
-          ▼
- 2. AST Security Guard       ← static analysis, block dangerous patterns
-          │
-          ▼
- 3. Ruff Lint Gate (opt.)    ← syntax and style validation
-          │
-          ▼
- 4. Docker Sandbox           ← isolated execution environment
-          │
-          ▼
- 5. Credential Vault         ← secrets injected as env vars, never in code
-          │
-          ▼
- Runtime enforcement:
- 6. Read-Only Enforcement    ← compile-time endpoint filtering
- 7. Domain Allowlist         ← runtime hostname whitelist
+```mermaid
+flowchart TD
+    A["User code submitted via execute_code"] --> B["1. Code Size Limit\nreject before any parsing"]
+    B --> C["2. AST Security Guard\nstatic analysis, block dangerous patterns"]
+    C --> D["3. Ruff Lint Gate (opt.)\nsyntax and style validation"]
+    D --> E["4. Docker Sandbox\nisolated execution environment"]
+    E --> F["5. Credential Vault\nsecrets injected as env vars, never in code"]
+    F --> G["Runtime enforcement"]
+    G --> H["6. Read-Only Enforcement\ncompile-time endpoint filtering"]
+    G --> I["7. Domain Allowlist\nruntime hostname whitelist"]
 ```
 
 ---
@@ -124,24 +112,12 @@ API keys, bearer tokens, and custom headers are **never written to generated cod
 
 ### How Credentials Flow
 
-```
-.env / host environment
-  MCE_WEATHER_AUTH=Authorization: Bearer sk-secret
-  MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1
-          │
-          │  (1) vault.py reads credentials at execution time only
-          ▼
-  CodeExecutor._run_in_docker()
-    build_all_server_env_vars(["weather"])
-          │
-          │  (2) passed as Docker -e flags — never written to code
-          ▼
-  docker run -e MCE_WEATHER_AUTH=... -e MCE_WEATHER_BASE_URL=...
-          │
-          │  (3) read from container environment at import time
-          ▼
-  compiled/weather/functions.py (inside sandbox)
-    _AUTH_HEADER = os.environ.get("MCE_WEATHER_AUTH", "")
+```mermaid
+flowchart TD
+    A[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret\nMCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]
+    A -->|"(1) vault.py reads credentials\nat execution time only"| B["CodeExecutor._run_in_docker()\nbuild_all_server_env_vars(['weather'])"]
+    B -->|"(2) passed as Docker -e flags\nnever written to code"| C["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]
+    C -->|"(3) read from container\nenvironment at import time"| D["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get('MCE_WEATHER_AUTH', '')"]
 ```
 
 ### What the LLM Sees vs. What It Never Sees

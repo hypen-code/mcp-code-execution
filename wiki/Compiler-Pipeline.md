@@ -6,35 +6,16 @@ The MCE compiler converts Swagger/OpenAPI specifications into typed Python modul
 
 ## Pipeline Stages
 
-```
-swaggers.yaml
-      │
-      ▼
- 1. Source Loading       ← read YAML, resolve ${VAR} placeholders
-      │
-      ▼
- 2. Change Detection     ← hash spec content, skip if unchanged
-      │
-      ▼
- 3. Swagger Parsing      ← parse JSON/YAML spec, resolve $refs, normalize
-      │
-      ▼
- 4. Code Generation      ← Jinja2 template → functions.py
-      │
-      ▼
- 5. LLM Enhancement      ← optional: improve docstrings via LiteLLM
-      │
-      ▼
- 6. Ruff Validation      ← lint generated code
-      │
-      ▼
- 7. Manifest Writing     ← manifest.json + __init__.py
-      │
-      ▼
-compiled/{server-name}/
-  ├── functions.py
-  ├── manifest.json
-  └── __init__.py
+```mermaid
+flowchart TD
+    A["swaggers.yaml"] --> B["1. Source Loading\nread YAML, resolve \${VAR} placeholders"]
+    B --> C["2. Change Detection\nhash spec content, skip if unchanged"]
+    C --> D["3. Swagger Parsing\nparse JSON/YAML spec, resolve \$refs, normalize"]
+    D --> E["4. Code Generation\nJinja2 template → functions.py"]
+    E --> F["5. LLM Enhancement\noptional: improve docstrings via LiteLLM"]
+    F --> G["6. Ruff Validation\nlint generated code"]
+    G --> H["7. Manifest Writing\nmanifest.json + __init__.py"]
+    H --> I["compiled/{server-name}/\n  functions.py\n  manifest.json\n  __init__.py"]
 ```
 
 ---

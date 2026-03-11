@@ -21,8 +21,9 @@ MCE exposes exactly **4 tools + 1 prompt** to the LLM. This intentionally small 
 
 ## Required Call Order
 
-```
-list_servers  →  get_functions  →  execute_code  →  run_cached_code (optional)
+```mermaid
+graph LR
+    A[list_servers] --> B[get_functions] --> C[execute_code] --> D["run_cached_code\n(optional)"]
 ```
 
 **`get_functions` must be called before `execute_code`.** It returns the exact `import_statement`, parameter names, and response schema. Guessing produces broken code.
@@ -247,29 +248,23 @@ A built-in prompt that returns concise rules for writing parameterized, cacheabl
 
 ## Full Workflow Example
 
-```
-User: "What's the weather in London, Paris, and Tokyo?"
+```mermaid
+sequenceDiagram
+    participant User
+    participant LLM
+    participant MCE
 
-LLM → list_servers()
-← { servers: [{ name: "weather", functions: ["get_current_weather", ...] }] }
-
-LLM → get_functions([{ server_name: "weather", function_name: "get_current_weather" }])
-← { functions: [{ import_statement: "from weather.functions import get_current_weather", ... }] }
-
-LLM → execute_code("""
-from weather.functions import get_current_weather
-city = "London"
-def main():
-    return get_current_weather(city=city, units="metric")
-result = main()
-""", description="get weather by city")
-← { success: true, data: { temperature: 15.2 }, cache_id: "abc123" }
-
-LLM → run_cached_code("abc123", params={"city": "Paris"})
-← { success: true, data: { temperature: 18.5 }, cache_id: "def456" }
-
-LLM → run_cached_code("abc123", params={"city": "Tokyo"})
-← { success: true, data: { temperature: 12.0 }, cache_id: "ghi789" }
+    User->>LLM: "What's the weather in London, Paris, and Tokyo?"
+    LLM->>MCE: list_servers()
+    MCE-->>LLM: { servers: [{ name: "weather", functions: [...] }] }
+    LLM->>MCE: get_functions([{ server_name: "weather", function_name: "get_current_weather" }])
+    MCE-->>LLM: { functions: [{ import_statement: "from weather.functions import ...", ... }] }
+    LLM->>MCE: execute_code(city="London", description="get weather by city")
+    MCE-->>LLM: { success: true, data: { temperature: 15.2 }, cache_id: "abc123" }
+    LLM->>MCE: run_cached_code("abc123", params={"city": "Paris"})
+    MCE-->>LLM: { success: true, data: { temperature: 18.5 }, cache_id: "def456" }
+    LLM->>MCE: run_cached_code("abc123", params={"city": "Tokyo"})
+    MCE-->>LLM: { success: true, data: { temperature: 12.0 }, cache_id: "ghi789" }
 ```
 
 Three API calls. Only one piece of code. No token waste on repeated tool descriptions.

@@ -39,33 +39,35 @@ MCE eliminates all five problems with a single pattern: **compile once, discover
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   MCE MCP Server                     │
-│                                                     │
-│  ┌───────────┐  ┌───────────┐  ┌────────────────┐  │
-│  │  Compiler  │  │  Runtime   │  │  Code Executor │  │
-│  │  (setup)   │  │  (serve)   │  │  (Docker SDK)  │  │
-│  └─────┬─────┘  └─────┬─────┘  └───────┬────────┘  │
-│        │              │                 │            │
-│  ┌─────▼──────────────▼─────────────────▼────────┐  │
-│  │              Core Services                     │  │
-│  │  SwaggerParser | FunctionRegistry | CacheStore │  │
-│  │  SecurityGuard | CredentialVault               │  │
-│  └───────────────────────────────────────────────┘  │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │           4 MCP Tools (exposed to LLM)         │  │
-│  │  list_servers | get_functions | execute_code   │  │
-│  │  run_cached_code                               │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
-         │                            │
-         ▼                            ▼
-   ┌───────────┐            ┌──────────────────┐
-   │  Swagger   │            │  python:3.13-slim │
-   │  Sources   │            │  Docker Container  │
-   └───────────┘            └──────────────────┘
+```mermaid
+graph TB
+    subgraph MCE["MCE MCP Server"]
+        Compiler["Compiler\n(setup)"]
+        Runtime["Runtime\n(serve)"]
+        Executor["Code Executor\n(Docker SDK)"]
+
+        subgraph Core["Core Services"]
+            SwaggerParser
+            FunctionRegistry
+            CacheStore
+            SecurityGuard
+            CredentialVault
+        end
+
+        subgraph MCPTools["4 MCP Tools (exposed to LLM)"]
+            list_servers
+            get_functions
+            execute_code
+            run_cached_code
+        end
+
+        Compiler --> Core
+        Runtime --> Core
+        Executor --> Core
+    end
+
+    MCE --> Swagger["Swagger Sources"]
+    MCE --> Docker["python:3.13-slim\nDocker Container"]
 ```
 
 ### Subsystems at a Glance
@@ -80,10 +82,9 @@ MCE eliminates all five problems with a single pattern: **compile once, discover
 
 ### LLM Workflow
 
-```
-discover         inspect          execute          reuse
-────────         ───────          ───────          ─────
-list_servers  →  get_functions  →  execute_code  →  run_cached_code
+```mermaid
+graph LR
+    A["list_servers\n(discover)"] --> B["get_functions\n(inspect)"] --> C["execute_code\n(execute)"] --> D["run_cached_code\n(reuse)"]
 ```
 
 ---

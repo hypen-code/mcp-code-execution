@@ -123,12 +123,13 @@ These are not style preferences — they are enforced:
 
 ## Development Workflow
 
-```
-main           ← protected; release-ready at all times
-  └── feat/your-feature
-  └── fix/the-bug-description
-  └── chore/housekeeping-task
-  └── docs/update-readme
+```mermaid
+graph TD
+    main["main\n(protected — release-ready at all times)"]
+    main --> feat["feat/your-feature"]
+    main --> fix["fix/the-bug-description"]
+    main --> chore["chore/housekeeping-task"]
+    main --> docs["docs/update-readme"]
 ```
 
 1. Create a branch from `main`.
