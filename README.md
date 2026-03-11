@@ -29,33 +29,42 @@ reusable_code_guide → prompt: concise rules for writing parameterized, cacheab
 
 The LLM workflow: **discover → inspect → execute → reuse (SIMD)**
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   MCE MCP Server                     │
-│                                                     │
-│  ┌───────────┐  ┌───────────┐  ┌────────────────┐  │
-│  │  Compiler  │  │  Runtime   │  │  Code Executor │  │
-│  │  (setup)   │  │  (serve)   │  │  (Docker SDK)  │  │
-│  └─────┬─────┘  └─────┬─────┘  └───────┬────────┘  │
-│        │              │                 │            │
-│  ┌─────▼──────────────▼─────────────────▼────────┐  │
-│  │              Core Services                     │  │
-│  │  SwaggerParser | FunctionRegistry | CacheStore │  │
-│  │  SecurityGuard | CredentialVault               │  │
-│  └───────────────────────────────────────────────┘  │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │           4 MCP Tools (exposed to LLM)         │  │
-│  │  list_servers | get_functions | execute_code   │  │
-│  │  run_cached_code                               │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
-         │                            │
-         ▼                            ▼
-   ┌───────────┐            ┌──────────────────┐
-   │  Swagger   │            │  python:3.13-slim │
-   │  Sources   │            │  Docker Container  │
-   └───────────┘            └──────────────────┘
+```mermaid
+flowchart TB
+    classDef component fill:#1e3a5f,stroke:#4a9eff,stroke-width:2px,color:#e0f0ff
+    classDef core     fill:#1a3a2a,stroke:#4caf82,stroke-width:2px,color:#d0ffe8
+    classDef tools    fill:#3a1a3a,stroke:#c084fc,stroke-width:2px,color:#f3e8ff
+    classDef external fill:#2a2a1a,stroke:#f0c040,stroke-width:2px,color:#fffbe0
+
+    subgraph MCE["MCE MCP Server"]
+        direction TB
+        subgraph Components["Components"]
+            Compiler["Compiler\n(setup)"]:::component
+            Runtime["Runtime\n(serve)"]:::component
+            Executor["Code Executor\n(Docker SDK)"]:::component
+        end
+
+        subgraph Core["Core Services"]
+            CS["SwaggerParser | FunctionRegistry | CacheStore\nSecurityGuard | CredentialVault"]:::core
+        end
+
+        subgraph Tools["4 MCP Tools — exposed to LLM"]
+            T["list_servers | get_functions | execute_code | run_cached_code"]:::tools
+        end
+
+        Compiler @c1--> CS
+        Runtime  @c2--> CS
+        Executor @c3--> CS
+    end
+
+    MCE @e1--> Swagger["Swagger\nSources"]:::external
+    MCE @e2--> Docker["python:3.13-slim\nDocker Container"]:::external
+
+    @c1@{ animation: fast }
+    @c2@{ animation: fast }
+    @c3@{ animation: fast }
+    @e1@{ animation: slow }
+    @e2@{ animation: slow }
 ```
 
 ## Quick Start
@@ -321,25 +330,25 @@ MCE uses a **defense-in-depth** approach:
 
 Your API keys, bearer tokens, and custom headers are **never exposed to any LLM** — not during compilation, not during execution. Here is exactly how credentials flow through the system:
 
-```
-.env / host environment
-  MCE_WEATHER_AUTH=Authorization: Bearer sk-secret
-  MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1
-          │
-          │  (1) vault.py reads credentials at execution time
-          ▼
-  CodeExecutor._run_in_docker()
-    build_all_server_env_vars(["weather"])
-          │
-          │  (2) passed as Docker -e flags — never written to code
-          ▼
-  docker run -e MCE_WEATHER_AUTH=... -e MCE_WEATHER_BASE_URL=...
-          │
-          │  (3) read from container environment at import time
-          ▼
-  compiled/weather/functions.py (inside sandbox)
-    _AUTH_HEADER = os.environ.get("MCE_WEATHER_AUTH", "")
-    _EXTRA_HEADERS = json.loads(os.environ.get("MCE_WEATHER_EXTRA_HEADERS", "{}"))
+```mermaid
+flowchart TD
+    classDef envNode    fill:#1e3a5f,stroke:#4a9eff,stroke-width:2px,color:#e0f0ff
+    classDef vaultNode  fill:#3a1a1a,stroke:#ff6b6b,stroke-width:2px,color:#ffe8e8
+    classDef dockerNode fill:#1a2a3a,stroke:#f0a040,stroke-width:2px,color:#fff4e0
+    classDef sandboxNode fill:#1a3a2a,stroke:#4caf82,stroke-width:2px,color:#d0ffe8
+
+    ENV[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret\nMCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]:::envNode
+    VAULT["CodeExecutor._run_in_docker()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
+    DOCKER["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
+    SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;)\n_EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
+
+    ENV    @s1-->|"(1) vault.py reads credentials at execution time"|   VAULT
+    VAULT  @s2-->|"(2) passed as Docker -e flags — never written to code"| DOCKER
+    DOCKER @s3-->|"(3) read from container environment at import time"|  SANDBOX
+
+    @s1@{ animation: slow }
+    @s2@{ animation: slow }
+    @s3@{ animation: slow }
 ```
 
 **What the LLM sees vs. what it never sees:**
