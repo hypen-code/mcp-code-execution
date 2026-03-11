@@ -52,19 +52,13 @@ flowchart TB
             T["list_servers | get_functions | execute_code | run_cached_code"]:::tools
         end
 
-        Compiler @c1--> CS
-        Runtime  @c2--> CS
-        Executor @c3--> CS
+        Compiler --> CS
+        Runtime  --> CS
+        Executor --> CS
     end
 
-    MCE @e1--> Swagger["Swagger\nSources"]:::external
-    MCE @e2--> Docker["python:3.13-slim\nDocker Container"]:::external
-
-    @c1@{ animation: fast }
-    @c2@{ animation: fast }
-    @c3@{ animation: fast }
-    @e1@{ animation: slow }
-    @e2@{ animation: slow }
+    MCE --> Swagger["Swagger\nSources"]:::external
+    MCE --> Docker["python:3.13-slim\nDocker Container"]:::external
 ```
 
 ## Quick Start
@@ -342,13 +336,9 @@ flowchart TD
     DOCKER["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
     SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;)\n_EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
 
-    ENV    @s1-->|"(1) vault.py reads credentials at execution time"|   VAULT
-    VAULT  @s2-->|"(2) passed as Docker -e flags — never written to code"| DOCKER
-    DOCKER @s3-->|"(3) read from container environment at import time"|  SANDBOX
-
-    @s1@{ animation: slow }
-    @s2@{ animation: slow }
-    @s3@{ animation: slow }
+    ENV    -->|"(1) vault.py reads credentials at execution time"|   VAULT
+    VAULT  -->|"(2) passed as Docker -e flags — never written to code"| DOCKER
+    DOCKER -->|"(3) read from container environment at import time"|  SANDBOX
 ```
 
 **What the LLM sees vs. what it never sees:**
