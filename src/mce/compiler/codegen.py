@@ -168,6 +168,7 @@ def _safe_field_name(name: str) -> str:
     Returns:
         Safe Python identifier (appends underscore for keywords).
     """
+    name = name.replace("@", "_")
     if not name or name[0].isdigit():
         return f"f_{name}"
     if keyword.iskeyword(name):
