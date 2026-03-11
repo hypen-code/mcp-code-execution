@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import keyword
 import re
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,26 @@ _TYPE_MAP: dict[str, str] = {
     "object": "dict[str, Any]",
     "array": "list[Any]",
 }
+
+
+def _wrap_text(text: str, width: int, subsequent_indent: str = "") -> str:
+    """Wrap each paragraph of text to fit within width, preserving blank lines."""
+    if not text:
+        return text
+    paragraphs = text.split("\n\n")
+    wrapped = []
+    for para in paragraphs:
+        para = para.replace("\n", " ").strip()
+        wrapped.append(
+            textwrap.fill(
+                para,
+                width=width,
+                subsequent_indent=subsequent_indent,
+                break_long_words=True,
+                break_on_hyphens=True,
+            )
+        )
+    return "\n\n".join(wrapped)
 
 
 def _swagger_type_to_python(swagger_type: str) -> str:
@@ -277,12 +298,15 @@ def _build_docstring_args(endpoint: EndpointSpec) -> list[dict[str, Any]]:
     """
     args = []
     for p in endpoint.parameters:
+        safe = _safe_name(p.name)
+        # 120 - 8 (indent) - len(name) - 2 (": ") - 11 (" (required)")
+        desc_width = max(40, 99 - len(safe))
         args.append(
             {
-                "name": _safe_name(p.name),
+                "name": safe,
                 "type": _swagger_type_to_python(p.param_type),
                 "required": p.required,
-                "description": p.description or p.name,
+                "description": _wrap_text(p.description or p.name, width=desc_width, subsequent_indent="            "),
             }
         )
     if endpoint.request_body_schema:
@@ -327,6 +351,7 @@ class CodeGenerator:
 
         functions_data = [self._prepare_function_data(ep) for ep in spec.endpoints]
 
+        header_desc_width = max(40, 120 - len(f"# Server: {spec.name} \u2014 "))
         try:
             code: str = template.render(
                 server_name=spec.name,
@@ -334,6 +359,7 @@ class CodeGenerator:
                 base_url=spec.base_url,
                 is_read_only=spec.is_read_only,
                 functions=functions_data,
+                header_desc_width=header_desc_width,
             )
         except Exception as exc:
             raise CompileError(f"Template rendering failed for {spec.name}: {exc}") from exc
@@ -360,9 +386,10 @@ class CodeGenerator:
             "method": endpoint.method,
             "path": endpoint.path,
             "path_expr": _build_path_formatted(endpoint),
-            "summary": endpoint.summary,
-            "description": endpoint.description,
-            "signature": _build_function_signature(endpoint),
+            "summary": _wrap_text(endpoint.summary, width=113, subsequent_indent="    "),
+            "description": _wrap_text(endpoint.description or "", width=116, subsequent_indent="    "),
+            "signature": (_sig := _build_function_signature(endpoint)),
+            "params": _sig.split(", ") if _sig else [],
             "params_dict": _build_params_dict(endpoint),
             "has_body": bool(endpoint.request_body_schema) and endpoint.method in ("POST", "PUT", "PATCH"),
             "docstring_args": _build_docstring_args(endpoint),
