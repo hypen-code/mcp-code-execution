@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -361,3 +361,81 @@ async def test_compile_all_records_failed_source(tmp_path: Path) -> None:
     orchestrator = Orchestrator(config)
     result = await orchestrator.compile_all()
     assert "bad" in result.failed
+
+
+# ---------------------------------------------------------------------------
+# _fetch_skills_content()
+# ---------------------------------------------------------------------------
+
+
+async def test_fetch_skills_content_local_file_success(tmp_path: Path) -> None:
+    skills_file = tmp_path / "skills.md"
+    skills_file.write_text("# Skills\nUse param X.", encoding="utf-8")
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+    content = await orchestrator._fetch_skills_content(str(skills_file), "weather")
+    assert content == "# Skills\nUse param X."
+
+
+async def test_fetch_skills_content_local_file_not_found(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+    content = await orchestrator._fetch_skills_content("/nonexistent/path/skills.md", "weather")
+    assert content is None
+
+
+async def test_fetch_skills_content_remote_success(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+
+    mock_response = MagicMock()
+    mock_response.text = "# Remote Skills"
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("mce.compiler.orchestrator.httpx.AsyncClient", return_value=mock_client):
+        content = await orchestrator._fetch_skills_content("https://example.com/skills.md", "weather")
+
+    assert content == "# Remote Skills"
+
+
+async def test_fetch_skills_content_remote_failure(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("mce.compiler.orchestrator.httpx.AsyncClient", return_value=mock_client):
+        content = await orchestrator._fetch_skills_content("https://example.com/skills.md", "weather")
+
+    assert content is None
+
+
+# ---------------------------------------------------------------------------
+# _write_skills()
+# ---------------------------------------------------------------------------
+
+
+def test_write_skills_writes_file(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+    server_dir = tmp_path / "weather"
+    server_dir.mkdir()
+    orchestrator._write_skills(server_dir, "# Skills content", "weather")
+    assert (server_dir / "skills.md").read_text(encoding="utf-8") == "# Skills content"
+
+
+def test_write_skills_noop_when_none(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+    server_dir = tmp_path / "weather"
+    server_dir.mkdir()
+    orchestrator._write_skills(server_dir, None, "weather")
+    assert not (server_dir / "skills.md").exists()

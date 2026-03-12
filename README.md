@@ -267,6 +267,7 @@ servers:
     base_url: "https://api.weather.example.com/v1"
     auth_header: "${WEATHER_API_KEY}"   # Resolved from env
     is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
+    skills_url: "./docs/weather_skills.md"  # Optional: server skills guide (see below)
     extra_headers:                      # Optional: custom headers injected on every request
       X-API-Version: "v1"
       X-Custom-Header: "value"
@@ -281,6 +282,70 @@ servers:
 > If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
 
 > `extra_headers` are serialized to `MCE_{SERVER}_EXTRA_HEADERS` (JSON string) at compile time and injected into every generated function call.
+
+### Server Skills
+
+Skills documents are optional Markdown files that teach the LLM how to use a specific server effectively — preferred parameter combinations, known quirks, worked examples, and domain-specific best practices that the Swagger spec alone cannot express.
+
+**How to add a skills guide:**
+
+1. Write a Markdown file for the server (any name, any location):
+
+   ```markdown
+   # Weather API — Skills Guide
+
+   ## Preferred Usage
+   Always request `temperature_2m` and `windspeed_10m` together for a complete
+   surface weather snapshot. The `forecast_days` parameter defaults to 7 — set it
+   to 1 for current-conditions queries to minimise response size.
+
+   ## Common Pitfalls
+   - `latitude`/`longitude` are required; the API returns HTTP 400 without them.
+   - Hourly and daily variables cannot be mixed in the same request.
+   ```
+
+2. Point `skills_url` at it in `config/swaggers.yaml` — local paths and HTTP(S) URLs are both supported:
+
+   ```yaml
+   servers:
+     - name: weather
+       swagger_url: "https://api.weather.example.com/v1/openapi.json"
+       base_url: "https://api.weather.example.com/v1"
+       skills_url: "./docs/weather_skills.md"        # local file
+       # skills_url: "https://example.com/skills.md" # or remote URL
+   ```
+
+3. Run `mce compile`. MCE copies the content to `compiled/<server>/skills.md`.
+
+**How skills are delivered to the LLM:**
+
+Skills content is embedded directly into the MCP server's `instructions` field, which is part of the `initialize` handshake. This means the LLM receives the guide as system context **at connection time** — no explicit resource fetch is needed.
+
+```
+MCE initialize response
+└── instructions
+    ├── MCE workflow rules (always present)
+    └── ## Server Skills          ← injected only when skills.md exists
+        └── ### `weather`
+            └── <content of skills.md>
+```
+
+If no server has a `skills_url`, the section is omitted entirely — no extra tokens are spent.
+
+**Skills as an MCP resource:**
+
+Each server with a `skills.md` also exposes the content as a static MCP resource discoverable via `resources/list`:
+
+```
+URI:  skills://weather
+Type: text/markdown
+```
+
+This lets clients and tools fetch an up-to-date copy on demand (e.g. after `mce compile` refreshed the file without restarting the server).
+
+**Incremental refresh:**
+
+`mce compile` re-fetches and overwrites `skills.md` on every run, even when the Swagger spec and generated code are unchanged. Edit the source file, run `mce compile`, restart the server — the updated guide is live.
 
 ### LLM Enhancement (Optional)
 

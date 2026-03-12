@@ -65,26 +65,40 @@ without first calling `get_functions` in the same session.
 - If execution fails, re-read the `get_functions` output before retrying.
 """
 
-_SKILLS_INSTRUCTIONS_TEMPLATE = """\
 
-## Skills Documentation
+def _build_instructions(registry: Registry, servers_with_skills: list[str]) -> str:
+    """Build the FastMCP instructions string.
 
-The following servers have skills guides with usage patterns, best practices,
-and worked examples. **Read a server's skills resource BEFORE using its functions.**
+    Skills content for each entry in ``servers_with_skills`` is embedded inline
+    so the LLM receives it automatically via the MCP ``initialize`` response —
+    no explicit resource fetch required.  When the list is empty the base
+    instructions are returned as-is, spending zero extra tokens.
 
-{server_list}
-
-Access a skills guide via its resource URI:
-  `skills://{{server_name}}`  (replace `{{server_name}}` with the actual name)
-"""
-
-
-def _build_instructions(servers_with_skills: list[str]) -> str:
-    """Build the FastMCP instructions string, appending the skills section when relevant."""
+    Args:
+        registry: Registry used to resolve each server's skills file path.
+        servers_with_skills: Pre-computed list of server module names that have
+            a ``skills.md`` on disk.  Computed once in ``create_server`` so this
+            function never calls ``registry.list_servers()`` itself.
+    """
     if not servers_with_skills:
         return _BASE_INSTRUCTIONS
-    server_list = "\n".join(f"- `{s}`" for s in servers_with_skills)
-    return _BASE_INSTRUCTIONS + _SKILLS_INSTRUCTIONS_TEMPLATE.format(server_list=server_list)
+
+    skills_blocks: list[str] = []
+    for sn in servers_with_skills:
+        path = registry.skills_path(sn)
+        if path is not None:
+            skills_blocks.append(f"### `{sn}`\n\n{path.read_text(encoding='utf-8')}")
+
+    if not skills_blocks:
+        return _BASE_INSTRUCTIONS
+
+    divider = "\n\n---\n\n"
+    skills_section = (
+        "\n\n## Server Skills\n\n"
+        "The following server-specific guides are pre-loaded. "
+        "Apply their guidance whenever you use that server's tools.\n\n" + divider.join(skills_blocks) + "\n"
+    )
+    return _BASE_INSTRUCTIONS + skills_section
 
 
 def create_server(
@@ -110,11 +124,16 @@ def create_server(
     if cache is None:
         cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
 
-    servers_with_skills = [s.name for s in registry.list_servers() if registry.has_skills(s.name)]
+    # Compute once; guard so a broken registry at startup doesn't crash the server.
+    try:
+        servers_with_skills = [s.name for s in registry.list_servers() if registry.has_skills(s.name)]
+    except Exception:  # noqa: BLE001
+        logger.warning("skills_discovery_failed")
+        servers_with_skills = []
 
     mcp: FastMCP = FastMCP(
         name="MCE — MCP Code Execution",
-        instructions=_build_instructions(servers_with_skills),
+        instructions=_build_instructions(registry, servers_with_skills),
     )
 
     executor = CodeExecutor(config, cache)

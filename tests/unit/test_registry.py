@@ -395,3 +395,40 @@ def test_extract_function_snippet_function_not_in_file_returns_full(tmp_path: Pa
     fn = registry.get_function("partial", "get_current_weather")
     # Function not found in file → full source
     assert fn.source_code == source
+
+
+# ---------------------------------------------------------------------------
+# has_skills() / skills_path()
+# ---------------------------------------------------------------------------
+
+
+def test_has_skills_returns_true_when_file_exists(tmp_path: Path) -> None:
+    _make_manifest(tmp_path, server_name="weather")
+    (tmp_path / "weather" / "skills.md").write_text("# Skills", encoding="utf-8")
+    registry = Registry(str(tmp_path))
+    registry.load()
+    assert registry.has_skills("weather") is True
+
+
+def test_has_skills_returns_false_when_file_absent(tmp_path: Path) -> None:
+    _make_manifest(tmp_path, server_name="weather")
+    registry = Registry(str(tmp_path))
+    registry.load()
+    assert registry.has_skills("weather") is False
+
+
+def test_skills_path_returns_path_when_file_exists(tmp_path: Path) -> None:
+    _make_manifest(tmp_path, server_name="weather")
+    skills_file = tmp_path / "weather" / "skills.md"
+    skills_file.write_text("# Skills", encoding="utf-8")
+    registry = Registry(str(tmp_path))
+    registry.load()
+    result = registry.skills_path("weather")
+    assert result == skills_file
+
+
+def test_skills_path_returns_none_when_file_absent(tmp_path: Path) -> None:
+    _make_manifest(tmp_path, server_name="weather")
+    registry = Registry(str(tmp_path))
+    registry.load()
+    assert registry.skills_path("weather") is None

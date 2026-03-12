@@ -20,7 +20,7 @@ from mce.errors import (
 from mce.models import ExecutionResult
 from mce.runtime.cache import CacheStore
 from mce.runtime.registry import Registry
-from mce.server import create_server, initialize_server
+from mce.server import _BASE_INSTRUCTIONS, _build_instructions, create_server, initialize_server
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,6 +57,9 @@ def _make_mock_registry() -> MagicMock:
     server_info.functions = ["get_current_weather"]
     server_info.function_summaries = {"get_current_weather": "Get current weather"}
     registry.list_servers.return_value = [server_info]
+    # Skills disabled by default so existing tests aren't affected by skills paths.
+    registry.has_skills.return_value = False
+    registry.skills_path.return_value = None
 
     fn_info = MagicMock()
     fn_info.function_name = "get_current_weather"
@@ -538,3 +541,100 @@ async def test_initialize_server_logs_and_returns(tmp_path: Path) -> None:
         patch("mce.runtime.cache.CacheStore.cleanup_expired", new=AsyncMock(return_value=0)),
     ):
         await initialize_server(config, mcp)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _build_instructions — skills embedding
+# ---------------------------------------------------------------------------
+
+
+def test_build_instructions_no_skills_returns_base(tmp_path: Path) -> None:
+    """No servers with skills → returns _BASE_INSTRUCTIONS unchanged."""
+    registry = _make_mock_registry()
+    result = _build_instructions(registry, [])
+    assert result == _BASE_INSTRUCTIONS
+
+
+def test_build_instructions_with_skills_embeds_content(tmp_path: Path) -> None:
+    """Skills content is injected into the instructions string."""
+    skills_file = tmp_path / "skills.md"
+    skills_file.write_text("# Weather Skills\nUse param X.", encoding="utf-8")
+
+    registry = _make_mock_registry()
+    registry.skills_path.return_value = skills_file
+
+    result = _build_instructions(registry, ["weather"])
+
+    assert "Weather Skills" in result
+    assert "Server Skills" in result
+    assert "weather" in result
+
+
+def test_build_instructions_skills_path_none_falls_back_to_base(tmp_path: Path) -> None:
+    """If skills_path returns None for all servers, return base instructions."""
+    registry = _make_mock_registry()
+    registry.skills_path.return_value = None  # file removed after discovery
+
+    result = _build_instructions(registry, ["weather"])
+    assert result == _BASE_INSTRUCTIONS
+
+
+def test_create_server_skills_discovery_failure_does_not_crash(tmp_path: Path) -> None:
+    """A broken registry at startup falls back to base instructions gracefully."""
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    registry.list_servers.side_effect = RuntimeError("registry broke")
+    cache = _make_mock_cache()
+
+    # Must not raise — the guard in create_server catches the exception.
+    mcp = create_server(config, registry=registry, cache=cache)
+    assert mcp is not None
+
+
+async def test_create_server_registers_skills_resource(tmp_path: Path) -> None:
+    """When a server has skills, its resource is listed by the MCP server."""
+    skills_file = tmp_path / "skills.md"
+    skills_file.write_text("# Skills content", encoding="utf-8")
+
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    registry.skills_path.return_value = skills_file
+    cache = _make_mock_cache()
+
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    resources = await mcp.list_resources()
+    assert any("weather" in str(r.uri) for r in resources)
+
+
+async def test_skills_resource_returns_file_content(tmp_path: Path) -> None:
+    """The registered skills resource handler reads and returns the skills file."""
+    skills_content = "# Skills\nAlways pass latitude and longitude."
+    skills_file = tmp_path / "skills.md"
+    skills_file.write_text(skills_content, encoding="utf-8")
+
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    registry.skills_path.return_value = skills_file
+    cache = _make_mock_cache()
+
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = await mcp.read_resource("skills://weather")
+    assert skills_content in result.contents[0].content
+
+
+async def test_skills_resource_returns_message_when_file_missing(tmp_path: Path) -> None:
+    """The skills handler returns a descriptive message when skills_path is None."""
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    registry.skills_path.return_value = None  # File was removed after server started
+    cache = _make_mock_cache()
+
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = await mcp.read_resource("skills://weather")
+    assert "No skills documentation" in result.contents[0].content
