@@ -28,24 +28,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def create_server(
-    config: MCEConfig,
-    registry: Registry | None = None,
-    cache: CacheStore | None = None,
-) -> FastMCP:
-    """Create and configure the MCE FastMCP server with all 5 tools and 1 prompt.
-
-    Args:
-        config: MCE configuration instance.
-        registry: Pre-loaded Registry. If None, a new one is created from config.
-        cache: Pre-initialized CacheStore. If None, a new one is created from config.
-
-    Returns:
-        Configured FastMCP server ready to run.
-    """
-    mcp: FastMCP = FastMCP(
-        name="MCE — MCP Code Execution",
-        instructions="""\
+_BASE_INSTRUCTIONS = """\
 # MCE — MCP Code Execution: Usage Guide
 
 ## MANDATORY RULE
@@ -80,14 +63,60 @@ without first calling `get_functions` in the same session.
 - NEVER call `execute_code` when a `cache_id` for the same operation is in context.
 - Keep `execute_code` payloads minimal — extract only the fields you need.
 - If execution fails, re-read the `get_functions` output before retrying.
-""",
-    )
+"""
 
+_SKILLS_INSTRUCTIONS_TEMPLATE = """\
+
+## Skills Documentation
+
+The following servers have skills guides with usage patterns, best practices,
+and worked examples. **Read a server's skills resource BEFORE using its functions.**
+
+{server_list}
+
+Access a skills guide via its resource URI:
+  `skills://{{server_name}}`  (replace `{{server_name}}` with the actual name)
+"""
+
+
+def _build_instructions(servers_with_skills: list[str]) -> str:
+    """Build the FastMCP instructions string, appending the skills section when relevant."""
+    if not servers_with_skills:
+        return _BASE_INSTRUCTIONS
+    server_list = "\n".join(f"- `{s}`" for s in servers_with_skills)
+    return _BASE_INSTRUCTIONS + _SKILLS_INSTRUCTIONS_TEMPLATE.format(server_list=server_list)
+
+
+def create_server(
+    config: MCEConfig,
+    registry: Registry | None = None,
+    cache: CacheStore | None = None,
+) -> FastMCP:
+    """Create and configure the MCE FastMCP server with all 5 tools and 1 prompt.
+
+    Args:
+        config: MCE configuration instance.
+        registry: Pre-loaded Registry. If None, a new one is created from config.
+        cache: Pre-initialized CacheStore. If None, a new one is created from config.
+
+    Returns:
+        Configured FastMCP server ready to run.
+    """
+    # Initialise registry before FastMCP so we can inspect skills availability
+    # and tailor the server instructions accordingly.
     if registry is None:
         registry = Registry(config.compiled_output_dir)
         registry.load()
     if cache is None:
         cache = CacheStore(config.cache_db_path, config.cache_ttl_seconds, config.cache_max_entries)
+
+    servers_with_skills = [s.name for s in registry.list_servers() if registry.has_skills(s.name)]
+
+    mcp: FastMCP = FastMCP(
+        name="MCE — MCP Code Execution",
+        instructions=_build_instructions(servers_with_skills),
+    )
+
     executor = CodeExecutor(config, cache)
 
     try:
@@ -362,6 +391,29 @@ without first calling `get_functions` in the same session.
             "- main() NEVER takes arguments\n"
             "- description: 'action + entity + key param', no specific values"
         )
+
+    # Register one concrete static resource per server that has a skills document.
+    # Static resources (no URI-template params) appear in resources/list, making them
+    # immediately discoverable.  Keeping registration conditional avoids surfacing
+    # empty resources when no skills are configured.
+    def _make_skills_resource(sn: str) -> None:
+        @mcp.resource(
+            f"skills://{sn}",
+            name=f"{sn}_skills",
+            description=f"Skills guide for {sn}: usage patterns, best practices, and worked examples.",
+            mime_type="text/markdown",
+        )
+        def _get_skills() -> str:
+            """Return the skills guide for this API server."""
+            skills_file = registry.skills_path(sn)
+            if skills_file is None:
+                logger.debug("skills_resource_miss", server=sn)
+                return f"No skills documentation is available for server '{sn}'."
+            logger.debug("skills_resource_served", server=sn)
+            return skills_file.read_text(encoding="utf-8")
+
+    for _sn in servers_with_skills:
+        _make_skills_resource(_sn)
 
     return mcp
 

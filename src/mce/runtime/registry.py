@@ -150,6 +150,32 @@ class Registry:
         manifest = self._get_server_manifest(server_name)
         return manifest.swagger_hash
 
+    def has_skills(self, server_name: str) -> bool:
+        """Return True if a compiled skills.md document exists for the server.
+
+        Uses file-system presence as the authoritative check so that the result
+        stays correct even after an incremental skills-only refresh.
+
+        Args:
+            server_name: Server module name (directory name under compiled_dir).
+
+        Returns:
+            True when skills.md is present on disk.
+        """
+        return (self._compiled_dir / server_name / "skills.md").is_file()
+
+    def skills_path(self, server_name: str) -> Path | None:
+        """Return the Path to a server's skills.md, or None if it does not exist.
+
+        Args:
+            server_name: Server module name.
+
+        Returns:
+            Absolute Path to skills.md, or None.
+        """
+        path = self._compiled_dir / server_name / "skills.md"
+        return path if path.is_file() else None
+
     def _get_server_manifest(self, server_name: str) -> ServerManifest:
         """Look up a server manifest by name.
 
