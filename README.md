@@ -267,6 +267,7 @@ servers:
     base_url: "https://api.weather.example.com/v1"
     auth_header: "${WEATHER_API_KEY}"   # Resolved from env
     is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
+    skills_url: "./docs/weather_skills.md"  # Optional: server skills guide (see below)
     extra_headers:                      # Optional: custom headers injected on every request
       X-API-Version: "v1"
       X-Custom-Header: "value"
@@ -276,11 +277,144 @@ servers:
     base_url: "https://api.hotel.example.com/v2"
     auth_header: "Bearer ${HOTEL_API_TOKEN}"
     is_read_only: false
+    top_level_functions:                   # Optional: expose selected functions as direct MCP tools
+      - getAvailableRooms
 ```
 
 > If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
 
 > `extra_headers` are serialized to `MCE_{SERVER}_EXTRA_HEADERS` (JSON string) at compile time and injected into every generated function call.
+
+### Server Skills
+
+Skills documents are optional Markdown files that teach the LLM how to use a specific server effectively — preferred parameter combinations, known quirks, worked examples, and domain-specific best practices that the Swagger spec alone cannot express.
+
+**How to add a skills guide:**
+
+1. Write a Markdown file for the server (any name, any location):
+
+   ```markdown
+   # Weather API — Skills Guide
+
+   ## Preferred Usage
+   Always request `temperature_2m` and `windspeed_10m` together for a complete
+   surface weather snapshot. The `forecast_days` parameter defaults to 7 — set it
+   to 1 for current-conditions queries to minimise response size.
+
+   ## Common Pitfalls
+   - `latitude`/`longitude` are required; the API returns HTTP 400 without them.
+   - Hourly and daily variables cannot be mixed in the same request.
+   ```
+
+2. Point `skills_url` at it in `config/swaggers.yaml` — local paths and HTTP(S) URLs are both supported:
+
+   ```yaml
+   servers:
+     - name: weather
+       swagger_url: "https://api.weather.example.com/v1/openapi.json"
+       base_url: "https://api.weather.example.com/v1"
+       skills_url: "./docs/weather_skills.md"        # local file
+       # skills_url: "https://example.com/skills.md" # or remote URL
+   ```
+
+3. Run `mce compile`. MCE copies the content to `compiled/<server>/skills.md`.
+
+**How skills are delivered to the LLM:**
+
+Skills content is embedded directly into the MCP server's `instructions` field, which is part of the `initialize` handshake. This means the LLM receives the guide as system context **at connection time** — no explicit resource fetch is needed.
+
+```
+MCE initialize response
+└── instructions
+    ├── MCE workflow rules (always present)
+    └── ## Server Skills          ← injected only when skills.md exists
+        └── ### `weather`
+            └── <content of skills.md>
+```
+
+If no server has a `skills_url`, the section is omitted entirely — no extra tokens are spent.
+
+**Skills as an MCP resource:**
+
+Each server with a `skills.md` also exposes the content as a static MCP resource discoverable via `resources/list`:
+
+```
+URI:  skills://weather
+Type: text/markdown
+```
+
+This lets clients and tools fetch an up-to-date copy on demand (e.g. after `mce compile` refreshed the file without restarting the server).
+
+**Incremental refresh:**
+
+`mce compile` re-fetches and overwrites `skills.md` on every run, even when the Swagger spec and generated code are unchanged. Edit the source file, run `mce compile`, restart the server — the updated guide is live.
+
+### Top-Level Functions
+
+> **Use sparingly — reserve for your single highest-priority tool per server.**
+
+`top_level_functions` lets you promote a small number of carefully chosen API functions into **direct MCP tools**. Promoted tools are callable immediately, without the usual `list_servers → get_functions → execute_code` workflow.
+
+**When to use:**
+
+A top-level function makes sense when one tool answers the vast majority of user requests for that server on its own — a weather forecast endpoint, a search endpoint, or a lookup that needs no chaining. If the LLM would run `execute_code` for it on every single request, making it top-level saves two round-trips and the code-generation step entirely.
+
+**How to configure:**
+
+Each entry in `top_level_functions` must be the **`operationId`** of the endpoint as defined in the Swagger/OpenAPI spec. Both the original camelCase form and the compiled snake_case form are accepted — MCE normalises them automatically.
+
+```yaml
+servers:
+  - name: weather
+    swagger_url: "https://api.weather.example.com/v1/openapi.json"
+    base_url: "https://api.weather.example.com/v1"
+    is_read_only: true
+    top_level_functions:
+      - getForecast       # operationId from the Swagger spec (camelCase or snake_case)
+      - geocodingSearch   # compiles to get_forecast and geocoding_search respectively
+```
+
+To find the right value, open your Swagger YAML/JSON and look for the `operationId` field on each path operation:
+
+```yaml
+# In your swagger file:
+paths:
+  /forecast:
+    get:
+      operationId: getForecast   # ← use this value
+```
+
+If a name in the list does not match any compiled `operationId`, a warning is logged and the entry is skipped — no error is raised, and the server starts normally with the remaining tools.
+
+Run `mce compile`. MCE generates `compiled/weather/top_level_functions.py` containing an async wrapper for each listed function. When the server starts, these wrappers are registered with FastMCP as first-class tools alongside `list_servers`, `get_functions`, and `execute_code`.
+
+**What the LLM sees:**
+
+```
+list_servers        → discover available APIs
+get_functions       → inspect signatures and schemas
+execute_code        → run arbitrary Python in a sandbox
+run_cached_code     → re-run cached code with new params
+get_forecast        → direct call, no code generation needed  ← new
+```
+
+The server instructions also gain a **Direct API Tools** section listing each promoted function so the LLM knows to call it without going through the full workflow.
+
+**The token-cost trade-off — read before adding functions:**
+
+Every top-level tool adds its full signature and docstring to the MCP `tools/list` response, which is loaded into the LLM's context on every session. The standard workflow avoids this: `get_functions` is called only when a function is actually needed, and only for the 1–5 functions requested.
+
+| | Top-level tool | Standard workflow |
+|---|---|---|
+| Tokens per session | Always loaded | Only when called |
+| Round-trips per call | 1 (direct) | 3 (list → inspect → execute) |
+| Best for | One dominant use-case | Many varied endpoints |
+
+Adding too many top-level functions cancels out the context-window savings that MCE was designed to deliver. As a rule of thumb: **one top-level function per server is ideal; more than three is rarely justified.** If you find yourself promoting five or more, the standard `execute_code` workflow is almost certainly the better choice.
+
+**Incremental refresh:**
+
+Like `skills.md`, `top_level_functions.py` is regenerated on every `mce compile` run — even when the Swagger spec is unchanged. Add or remove a function name in `swaggers.yaml`, run `mce compile`, restart the server, and the change is live.
 
 ### LLM Enhancement (Optional)
 

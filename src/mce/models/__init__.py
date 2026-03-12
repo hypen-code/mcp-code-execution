@@ -74,6 +74,10 @@ class SwaggerSource(BaseModel):
     is_read_only: bool = False
     extra_headers: dict[str, str] = Field(default_factory=dict)
     headers: str = ""  # "[key1:value1,key2:value2]" format; parsed into extra_headers
+    skills_url: str | None = None  # Optional: local path or HTTP URL to a skills.md document
+    top_level_functions: list[str] = Field(
+        default_factory=list
+    )  # Optional: function names to expose as direct MCP tools
 
     @model_validator(mode="after")
     def _parse_headers(self) -> SwaggerSource:

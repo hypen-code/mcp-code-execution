@@ -11,11 +11,14 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
+import httpx
 import yaml
 
 from mce.compiler.codegen import CodeGenerator, _build_return_type
 from mce.compiler.swagger_parser import SwaggerParser
+from mce.compiler.top_level_codegen import TopLevelFunctionGenerator
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
 from mce.utils.logging import get_logger
@@ -64,6 +67,7 @@ class Orchestrator:
         """
         self._config = config
         self._codegen = CodeGenerator()
+        self._top_level_gen = TopLevelFunctionGenerator()
         self._output_dir = Path(config.compiled_output_dir)
 
     def load_swagger_sources(self) -> list[SwaggerSource]:
@@ -161,14 +165,27 @@ class Orchestrator:
         parser = SwaggerParser(source)
         spec = await parser.parse()
 
-        # Check if recompile needed
-        if not dry_run and self._is_up_to_date(manifest_path, spec.swagger_hash):
-            logger.info("server_up_to_date", server=source.name)
-            return 0
-
         if dry_run:
             logger.info("dry_run_parsed", server=source.name, endpoints=len(spec.endpoints))
             return len(spec.endpoints)
+
+        # Fetch skills content independently of code-generation state
+        skills_content: str | None = None
+        if source.skills_url:
+            skills_content = await self._fetch_skills_content(source.skills_url, source.name)
+
+        # Check if code recompile is needed
+        if self._is_up_to_date(manifest_path, spec.swagger_hash):
+            # Code is current; still refresh skills and top-level tools so config
+            # changes (new functions, updated YAML) propagate without a forced rebuild.
+            if skills_content is not None or source.top_level_functions:
+                server_dir.mkdir(parents=True, exist_ok=True)
+            if skills_content is not None:
+                self._write_skills(server_dir, skills_content, source.name)
+            if source.top_level_functions:
+                self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
+            logger.info("server_up_to_date", server=source.name)
+            return 0
 
         # Generate code
         code = self._codegen.generate(spec)
@@ -177,9 +194,87 @@ class Orchestrator:
         server_dir.mkdir(parents=True, exist_ok=True)
         self._write_functions(server_dir, spec, code)
         self._write_manifest(server_dir, spec)
+        self._write_skills(server_dir, skills_content, source.name)
+        if source.top_level_functions:
+            self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
 
         logger.info("server_compiled", server=source.name, endpoints=len(spec.endpoints))
         return len(spec.endpoints)
+
+    @staticmethod
+    async def _fetch_skills_content(skills_url: str, server_name: str) -> str | None:
+        """Fetch skills document content from a local file path or remote HTTP(S) URL.
+
+        Args:
+            skills_url: Local file path or HTTP/HTTPS URL.
+            server_name: Server name used for log context.
+
+        Returns:
+            Document content as a string, or None if the fetch failed.
+        """
+        parsed = urlparse(skills_url)
+        if parsed.scheme in ("http", "https"):
+            try:
+                async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
+                    response = await client.get(skills_url)
+                    response.raise_for_status()
+                    logger.debug("skills_fetched_remote", server=server_name, url=skills_url)
+                    return response.text
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("skills_fetch_failed", server=server_name, url=skills_url, error=str(exc))
+                return None
+        else:
+            try:
+                content = Path(skills_url).read_text(encoding="utf-8")
+                logger.debug("skills_fetched_local", server=server_name, path=skills_url)
+                return content
+            except OSError as exc:
+                logger.warning("skills_file_not_found", server=server_name, path=skills_url, error=str(exc))
+                return None
+
+    @staticmethod
+    def _write_skills(server_dir: Path, content: str | None, server_name: str) -> None:
+        """Write the skills document to the server output directory.
+
+        If content is None (no skills_url or fetch failed), this is a no-op;
+        any previously compiled skills.md is intentionally preserved.
+
+        Args:
+            server_dir: Output directory for this server.
+            content: Markdown content to write, or None to skip.
+            server_name: Server name used for log context.
+        """
+        if content is None:
+            return
+        skills_path = server_dir / "skills.md"
+        skills_path.write_text(content, encoding="utf-8")
+        logger.debug("skills_written", server=server_name, path=str(skills_path))
+
+    def _write_top_level_functions(
+        self,
+        server_dir: Path,
+        spec: ServerSpec,
+        module_name: str,
+        top_level_names: list[str],
+    ) -> None:
+        """Generate and write ``top_level_functions.py`` to the server output directory.
+
+        If none of the requested names resolve to a compiled endpoint the file is
+        not written (any previously generated file is intentionally preserved so a
+        typo in the YAML doesn't silently remove working tools).
+
+        Args:
+            server_dir: Output directory for this server.
+            spec: Compiled server specification.
+            module_name: Python module directory name (used in import statements).
+            top_level_names: Function names from swaggers.yaml.
+        """
+        code = self._top_level_gen.generate(spec, module_name, top_level_names)
+        if code is None:
+            return
+        out_path = server_dir / "top_level_functions.py"
+        out_path.write_text(code, encoding="utf-8")
+        logger.debug("top_level_functions_written", path=str(out_path))
 
     @staticmethod
     def _template_hash() -> str:
@@ -361,6 +456,7 @@ class Orchestrator:
     def _lint_all_generated_code(self) -> None:
         """Run ruff check on all generated Python files."""
         generated_files = list(self._output_dir.glob("**/functions.py"))
+        generated_files += list(self._output_dir.glob("**/top_level_functions.py"))
         if not generated_files:
             return
 
