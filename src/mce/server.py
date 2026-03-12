@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +28,53 @@ if TYPE_CHECKING:
     from mce.config import MCEConfig
 
 logger = get_logger(__name__)
+
+
+def _load_top_level_tools(compiled_dir: str | Path) -> list[dict[str, Any]]:
+    """Scan the compiled directory for ``top_level_functions.py`` files and load them.
+
+    Each file exposes a ``_TOP_LEVEL_TOOLS`` list of ``{"name", "fn", "server"}``
+    dicts that ``create_server`` uses to register direct FastMCP tools.
+
+    The compiled directory is added to ``sys.path`` (once) so the generated
+    files can import their sibling ``functions.py`` modules.
+
+    Args:
+        compiled_dir: Path to the compiled output directory.
+
+    Returns:
+        List of tool descriptor dicts ready to register with FastMCP.
+    """
+    compiled_path = Path(compiled_dir)
+    tools: list[dict[str, Any]] = []
+
+    tlf_paths = sorted(compiled_path.glob("*/top_level_functions.py"))
+    if not tlf_paths:
+        return tools
+
+    # Make compiled dir importable so `from <server>.functions import …` works
+    compiled_str = str(compiled_path.resolve())
+    if compiled_str not in sys.path:
+        sys.path.insert(0, compiled_str)
+
+    for tlf_path in tlf_paths:
+        server_name = tlf_path.parent.name
+        module_key = f"_mce_tlf_{server_name}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_key, tlf_path)
+            if spec is None or spec.loader is None:
+                logger.warning("top_level_functions_spec_invalid", path=str(tlf_path))
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            tool_list: list[dict[str, Any]] = getattr(module, "_TOP_LEVEL_TOOLS", [])
+            tools.extend(tool_list)
+            logger.info("top_level_tools_loaded", server=server_name, count=len(tool_list))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("top_level_tools_load_failed", server=server_name, error=str(exc))
+
+    return tools
 
 
 _BASE_INSTRUCTIONS = """\
@@ -66,7 +115,11 @@ without first calling `get_functions` in the same session.
 """
 
 
-def _build_instructions(registry: Registry, servers_with_skills: list[str]) -> str:
+def _build_instructions(
+    registry: Registry,
+    servers_with_skills: list[str],
+    top_level_tools: list[dict[str, Any]] | None = None,
+) -> str:
     """Build the FastMCP instructions string.
 
     Skills content for each entry in ``servers_with_skills`` is embedded inline
@@ -80,8 +133,27 @@ def _build_instructions(registry: Registry, servers_with_skills: list[str]) -> s
             a ``skills.md`` on disk.  Computed once in ``create_server`` so this
             function never calls ``registry.list_servers()`` itself.
     """
+    # Prepend a direct-tools section when top-level tools are registered so the
+    # LLM knows it can call them immediately — no workflow required.
+    direct_section = ""
+    if top_level_tools:
+        lines = [
+            "\n\n## Direct API Tools\n\n"
+            "The following API functions are registered as **direct MCP tools** "
+            "and can be called immediately — no `list_servers` → `get_functions` "
+            "→ `execute_code` workflow is needed.\n"
+        ]
+        # Group by server for readability
+        by_server: dict[str, list[str]] = {}
+        for entry in top_level_tools:
+            srv = entry.get("server", "unknown")
+            by_server.setdefault(srv, []).append(entry["name"])
+        for srv, names in by_server.items():
+            lines.append(f"\n**`{srv}`**: " + ", ".join(f"`{n}`" for n in names))
+        direct_section = "".join(lines) + "\n"
+
     if not servers_with_skills:
-        return _BASE_INSTRUCTIONS
+        return _BASE_INSTRUCTIONS + direct_section
 
     skills_blocks: list[str] = []
     for sn in servers_with_skills:
@@ -90,7 +162,7 @@ def _build_instructions(registry: Registry, servers_with_skills: list[str]) -> s
             skills_blocks.append(f"### `{sn}`\n\n{path.read_text(encoding='utf-8')}")
 
     if not skills_blocks:
-        return _BASE_INSTRUCTIONS
+        return _BASE_INSTRUCTIONS + direct_section
 
     divider = "\n\n---\n\n"
     skills_section = (
@@ -98,7 +170,7 @@ def _build_instructions(registry: Registry, servers_with_skills: list[str]) -> s
         "The following server-specific guides are pre-loaded. "
         "Apply their guidance whenever you use that server's tools.\n\n" + divider.join(skills_blocks) + "\n"
     )
-    return _BASE_INSTRUCTIONS + skills_section
+    return _BASE_INSTRUCTIONS + direct_section + skills_section
 
 
 def create_server(
@@ -131,9 +203,13 @@ def create_server(
         logger.warning("skills_discovery_failed")
         servers_with_skills = []
 
+    # Load top-level tool definitions from compiled directories (if any).
+    # Done before FastMCP construction so their names appear in the instructions.
+    top_level_tools = _load_top_level_tools(config.compiled_output_dir)
+
     mcp: FastMCP = FastMCP(
         name="MCE — MCP Code Execution",
-        instructions=_build_instructions(registry, servers_with_skills),
+        instructions=_build_instructions(registry, servers_with_skills, top_level_tools),
     )
 
     executor = CodeExecutor(config, cache)
@@ -433,6 +509,34 @@ def create_server(
 
     for _sn in servers_with_skills:
         _make_skills_resource(_sn)
+
+    # Register top-level tools as first-class FastMCP tools.
+    # Each tool is an async function defined in compiled/<server>/top_level_functions.py.
+    # The function's __name__ becomes the MCP tool name; its docstring the description.
+    _registered_tool_names: set[str] = set()
+    for _entry in top_level_tools:
+        _tool_fn = _entry["fn"]
+        _tool_name: str = _entry.get("name", _tool_fn.__name__)
+        _tool_server: str = _entry.get("server", "?")
+        if _tool_name in _registered_tool_names:
+            logger.warning(
+                "top_level_tool_name_conflict",
+                name=_tool_name,
+                server=_tool_server,
+                detail="Skipping duplicate tool name — rename the function in swaggers.yaml",
+            )
+            continue
+        try:
+            mcp.tool()(_tool_fn)
+            _registered_tool_names.add(_tool_name)
+            logger.info("top_level_tool_registered", name=_tool_name, server=_tool_server)
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning(
+                "top_level_tool_registration_failed",
+                name=_tool_name,
+                server=_tool_server,
+                error=str(_exc),
+            )
 
     return mcp
 

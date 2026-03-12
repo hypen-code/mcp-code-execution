@@ -18,6 +18,7 @@ import yaml
 
 from mce.compiler.codegen import CodeGenerator, _build_return_type
 from mce.compiler.swagger_parser import SwaggerParser
+from mce.compiler.top_level_codegen import TopLevelFunctionGenerator
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
 from mce.utils.logging import get_logger
@@ -66,6 +67,7 @@ class Orchestrator:
         """
         self._config = config
         self._codegen = CodeGenerator()
+        self._top_level_gen = TopLevelFunctionGenerator()
         self._output_dir = Path(config.compiled_output_dir)
 
     def load_swagger_sources(self) -> list[SwaggerSource]:
@@ -174,10 +176,14 @@ class Orchestrator:
 
         # Check if code recompile is needed
         if self._is_up_to_date(manifest_path, spec.swagger_hash):
-            # Code is current; still refresh skills if configured so updates propagate
-            if skills_content is not None:
+            # Code is current; still refresh skills and top-level tools so config
+            # changes (new functions, updated YAML) propagate without a forced rebuild.
+            if skills_content is not None or source.top_level_functions:
                 server_dir.mkdir(parents=True, exist_ok=True)
+            if skills_content is not None:
                 self._write_skills(server_dir, skills_content, source.name)
+            if source.top_level_functions:
+                self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
             logger.info("server_up_to_date", server=source.name)
             return 0
 
@@ -189,6 +195,8 @@ class Orchestrator:
         self._write_functions(server_dir, spec, code)
         self._write_manifest(server_dir, spec)
         self._write_skills(server_dir, skills_content, source.name)
+        if source.top_level_functions:
+            self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
 
         logger.info("server_compiled", server=source.name, endpoints=len(spec.endpoints))
         return len(spec.endpoints)
@@ -241,6 +249,32 @@ class Orchestrator:
         skills_path = server_dir / "skills.md"
         skills_path.write_text(content, encoding="utf-8")
         logger.debug("skills_written", server=server_name, path=str(skills_path))
+
+    def _write_top_level_functions(
+        self,
+        server_dir: Path,
+        spec: ServerSpec,
+        module_name: str,
+        top_level_names: list[str],
+    ) -> None:
+        """Generate and write ``top_level_functions.py`` to the server output directory.
+
+        If none of the requested names resolve to a compiled endpoint the file is
+        not written (any previously generated file is intentionally preserved so a
+        typo in the YAML doesn't silently remove working tools).
+
+        Args:
+            server_dir: Output directory for this server.
+            spec: Compiled server specification.
+            module_name: Python module directory name (used in import statements).
+            top_level_names: Function names from swaggers.yaml.
+        """
+        code = self._top_level_gen.generate(spec, module_name, top_level_names)
+        if code is None:
+            return
+        out_path = server_dir / "top_level_functions.py"
+        out_path.write_text(code, encoding="utf-8")
+        logger.debug("top_level_functions_written", path=str(out_path))
 
     @staticmethod
     def _template_hash() -> str:
@@ -422,6 +456,7 @@ class Orchestrator:
     def _lint_all_generated_code(self) -> None:
         """Run ruff check on all generated Python files."""
         generated_files = list(self._output_dir.glob("**/functions.py"))
+        generated_files += list(self._output_dir.glob("**/top_level_functions.py"))
         if not generated_files:
             return
 
