@@ -8,7 +8,7 @@
 ## 1. Project Overview
 
 **MCE** is a production-grade MCP server built with Python 3.13 and FastMCP.
-It exposes **5 meta-tools + 1 prompt** to LLMs instead of bloating the context
+It exposes **4 meta-tools + 1 prompt** to LLMs instead of bloating the context
 with N per-endpoint tools:
 
 | Tool / Prompt | Purpose |
@@ -16,7 +16,6 @@ with N per-endpoint tools:
 | `list_servers` | Discover compiled API servers and their functions |
 | `get_functions` | Inspect 1–5 function signatures and return schemas (batch) |
 | `execute_code` | Run LLM-generated Python code in an isolated Docker sandbox |
-| `get_cached_code` | Find previously successful code snippets |
 | `run_cached_code` | Re-execute a cached snippet with optional parameter overrides |
 | `reusable_code_guide` *(prompt)* | Concise rules for writing parameterized, cacheable code |
 
@@ -39,7 +38,7 @@ They are injected exclusively as Docker environment variables at runtime.
 ├── src/mce/
 │   ├── __init__.py                     ← version only
 │   ├── __main__.py                     ← CLI: clean | compile | serve | run
-│   ├── server.py                       ← FastMCP tool registration (5 tools + 1 prompt)
+│   ├── server.py                       ← FastMCP tool registration (4 tools + 1 prompt)
 │   ├── config.py                       ← MCEConfig (pydantic-settings)
 │   ├── errors.py                       ← full exception hierarchy
 │   ├── models/__init__.py              ← ALL pydantic models (single file)
@@ -396,10 +395,19 @@ database path across tests — isolation is mandatory.
 - `resolve_env_references(value)` expands `${VAR_NAME}` placeholders.
 - Returns a plain `dict[str, str]` for Docker's `environment=` parameter.
 
+### `runtime/executor.py`
+- Uses **`aiodocker`** (async) — never `subprocess` for Docker operations.
+- Two modes controlled by `MCEConfig.sandbox_mode`:
+  - `"warm"` (default): pool of persistent containers (`_WarmPool`); exec per request via `MCE_EXEC_CODE` env var.
+  - `"cold"`: new container per request; create → start → wait → log → delete.
+- **Lifecycle**: always call `await executor.startup()` before the first `execute()`, and `await executor.shutdown()` on exit. `_cmd_serve` in `__main__.py` owns this.
+- Code is base64-encoded into `MCE_EXEC_CODE`; entrypoint reads it on the container side — no stdin pipe needed.
+- `MCE_EXEC_TIMEOUT` env var carries the timeout into the container; `signal.alarm` enforces it from inside.
+
 ### `server.py`
-- `create_server(config)` returns a `FastMCP` instance.
-- All 5 tools registered via `@mcp.tool()`; 1 prompt via `@mcp.prompt()`.
-- Registry and cache are created inside `create_server()` and closed over.
+- `create_server(config, registry, cache, executor)` returns a `FastMCP` instance.
+- Pass a pre-started `CodeExecutor` via the `executor` parameter so `_cmd_serve` owns startup/shutdown.
+- All 4 tools registered via `@mcp.tool()`; 1 prompt via `@mcp.prompt()`.
 - Tool functions: always `async def`, always return `dict`, never raise.
 - Error returns always include `"error_type"` key for programmatic handling.
 - `instructions=` on `FastMCP(...)` is a single-line workflow hint only — keep it under 2 sentences.
@@ -411,6 +419,7 @@ database path across tests — isolation is mandatory.
 - CLI entry point: `mce run` (compile + serve)
 - `argparse` only — no click, no typer.
 - `asyncio.run()` wraps all async commands.
+- `_cmd_serve` owns executor lifecycle: `await executor.startup()` before `create_server()`, `await executor.shutdown()` in `finally`.
 
 ---
 

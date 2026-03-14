@@ -25,6 +25,7 @@ dependencies = [
     "ruff>=0.9.0",
     "structlog>=24.0.0",
     "aiosqlite>=0.20.0",
+    "aiodocker>=0.21.0",
     "anyio>=4.0.0",
     "toon_format @ git+https://github.com/toon-format/toon-python.git",
     "python-dotenv>=1.0.0",
@@ -74,6 +75,8 @@ warn_unused_configs = true
 
 [[tool.mypy.overrides]]
 module = [
+    "aiodocker",
+    "aiodocker.*",
     "litellm",
     "structlog",
     "structlog.*",

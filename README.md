@@ -248,6 +248,8 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
 | `MCE_MAX_OUTPUT_SIZE_BYTES` | `1048576` | Max sandbox stdout size (1 MB) |
 | `MCE_NETWORK_MODE` | `mce_network` | Docker network for sandbox containers |
+| `MCE_SANDBOX_MODE` | `warm` | Execution mode: `warm` (persistent container pool) or `cold` (new container per request) |
+| `MCE_WARM_POOL_SIZE` | `2` | Number of persistent containers to pre-create in warm mode |
 | `MCE_CACHE_ENABLED` | `true` | Enable code caching |
 | `MCE_CACHE_TTL_SECONDS` | `3600` | Cache entry lifetime |
 | `MCE_CACHE_MAX_ENTRIES` | `500` | Maximum cached entries before LRU eviction |
@@ -257,6 +259,62 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
 | `MCE_{SERVER}_AUTH` | — | Auth header per server (e.g. `Authorization: Bearer <token>`) |
 | `MCE_{SERVER}_EXTRA_HEADERS` | — | JSON object of custom HTTP headers per server (e.g. `{"X-Version":"v1"}`) |
+
+### Sandbox Execution Mode
+
+MCE talks to Docker exclusively through **[aiodocker](https://github.com/aio-libs/aiodocker)** — a fully async Python client that never blocks the asyncio event loop. Two execution modes are available, switchable at any time via `MCE_SANDBOX_MODE`.
+
+#### Warm mode (default — `MCE_SANDBOX_MODE=warm`)
+
+A pool of `MCE_WARM_POOL_SIZE` containers is created at server startup. Each container idles with `tail -f /dev/null`. Per request, a container is borrowed from the pool, `docker exec` runs the entrypoint inside it, and the container is returned for the next request. Cold-start overhead is paid **once at startup**, not per call.
+
+Code is delivered via the `MCE_EXEC_CODE` environment variable (base64-encoded) so no interactive stdin pipe is required — making `exec` both simple and reliable.
+
+```
+mce serve          ← startup: 2 containers created, pool ready
+                      ~200 ms one-time cost
+
+execute_code(…)    ← borrow container → exec entrypoint → return container
+                      ~5–30 ms (no cold start)
+
+execute_code(…)    ← borrow container → exec entrypoint → return container
+                      ~5–30 ms again
+```
+
+**Pros:**
+- Eliminates per-request container cold-start latency (~100–400 ms per call on a fast machine)
+- Consistent low latency under concurrent load — containers are recycled, not re-created
+- Fewer Docker API calls (no create/delete per request)
+
+**Cons:**
+- Uses more memory: each idle container occupies ~50 MB. With `MCE_WARM_POOL_SIZE=2` that is ~100 MB baseline
+- Filesystem state in `/tmp` (tmpfs) persists across consecutive requests within the same container. User code is executed in a fresh Python namespace each time, so there is no Python-level state leakage — only files deliberately written to `/tmp` could survive between execs
+- If a warm container is killed (e.g., OOM), the in-flight request fails and the container is not automatically replaced until the next server restart
+- Requires Docker to be healthy at startup — if the daemon is unreachable, the server will not start
+
+#### Cold mode (`MCE_SANDBOX_MODE=cold`)
+
+A brand-new container is created for every `execute_code` call, started, waited on, then deleted. Complete filesystem and process isolation between every request.
+
+**Pros:**
+- Perfect per-request isolation — no shared state of any kind between requests
+- Simpler failure model: a crashed container has zero effect on future requests
+- No persistent resource usage between requests
+
+**Cons:**
+- Higher latency per request: container startup adds ~100–400 ms on a fast host and can exceed 1 s if Docker's image cache is cold
+- More Docker churn (create + delete per request) under high load
+
+#### Choosing a mode
+
+| | Warm | Cold |
+|---|---|---|
+| Per-request latency | ~5–30 ms | ~150–500 ms |
+| Memory overhead | ~50 MB × pool size | None at rest |
+| Isolation | Namespace-level | Container-level |
+| Best for | Interactive / latency-sensitive use | Batch / security-critical use |
+
+For most deployments the default warm mode is the right choice. Switch to cold if you need the strongest possible per-request isolation or if memory is constrained.
 
 ### Swagger Config (`config/swaggers.yaml`)
 
@@ -466,8 +524,8 @@ flowchart TD
     classDef sandboxNode fill:#1a3a2a,stroke:#4caf82,stroke-width:2px,color:#d0ffe8
 
     ENV[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]:::envNode
-    VAULT["CodeExecutor._run_in_docker()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
-    DOCKER["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
+    VAULT["CodeExecutor._run_warm() / _run_cold()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
+    DOCKER["aiodocker exec/create -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
     SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;) _EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
 
     ENV    -->|"1: vault.py reads credentials at execution time"| VAULT

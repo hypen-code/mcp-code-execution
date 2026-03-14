@@ -1,8 +1,9 @@
-"""MCE FastMCP server — registers the 5 MCP tools and 1 prompt exposed to LLMs."""
+"""MCE FastMCP server — registers the 4 MCP tools and 1 prompt exposed to LLMs."""
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,7 +21,7 @@ from mce.errors import (
     ServerNotFoundError,
 )
 from mce.runtime.cache import CacheStore
-from mce.runtime.executor import CodeExecutor
+from mce.runtime.executor import CodeExecutor  # noqa: TC001  — used in function signature
 from mce.runtime.registry import Registry
 from mce.utils.logging import get_logger
 
@@ -80,38 +81,41 @@ def _load_top_level_tools(compiled_dir: str | Path) -> list[dict[str, Any]]:
 _BASE_INSTRUCTIONS = """\
 # MCE — MCP Code Execution: Usage Guide
 
-## MANDATORY RULE
+## TWO MANDATORY RULES — read before every tool call
 
-**`get_functions` BEFORE writing code** — You MUST call `get_functions` before
-using any server function. Never write `from <server>.functions import <fn>`
-without first calling `get_functions` in the same session.
+**Rule 1 — `get_functions` first**: Call `get_functions` before writing any code.
+Never use `from <server>.functions import <fn>` without calling `get_functions`
+first in the same session.
 
-## Workflow (follow in order)
+**Rule 2 — `run_cached_code` for repeat operations**: When the `execute_code`
+response contains a `cache_id`, that ID is your key for re-running the same logic
+with new values. The `_next` field in every successful response shows the exact
+call to make. You MUST use `run_cached_code` — do NOT call `execute_code` again
+for the same type of operation.
 
-1. **`list_servers`** — Discover available API servers and their function names.
+## Workflow
 
-2. **`get_functions`** — Fetch the signature, parameters, and return schema for
-   1–5 functions at once. The response includes a ready-to-use `import_statement`.
+1. **`list_servers`** — Discover available API servers.
 
-3. **`execute_code`** — Run Python code in a sandboxed Docker container.
-   - Use the exact `import_statement` from `get_functions`.
-   - Every dynamic value (city, ID, date, name…) MUST be a top-level variable.
-   - `main()` takes NO arguments — it reads those top-level variables as globals.
-   - NEVER hardcode any entity or value inside `main()`.
-   - The response includes a `cache_id` — you MUST remember it for reuse.
+2. **`get_functions`** — Fetch signatures for 1–5 functions. Use the
+   `import_statement` from the response verbatim.
 
-4. **`run_cached_code`** — Use this whenever the user asks for the same type of
-   operation with a different value (different city, different ID, different date…).
-   NEVER call `execute_code` again for the same operation type. Pass only the
-   changed top-level variable(s) as `params`.
+3. **`execute_code`** — Run sandboxed Python code.
+   - Put every dynamic value (city, ID, date…) in a **top-level variable**.
+   - `main()` reads those variables as globals — it takes NO arguments.
+   - On success the response includes `cache_id` AND a `_next` field that shows
+     the exact `run_cached_code(...)` call to use for the next similar request.
 
-## Rules
+4. **`run_cached_code`** — Re-run cached code with new parameter values.
+   - Use the `cache_id` from step 3.
+   - Pass only the changed variable(s) as `params`.
+   - The `_next` field in the `execute_code` response shows the exact syntax.
 
-- NEVER guess function signatures. Always call `get_functions` first.
-- NEVER import a server module without the `import_statement` from `get_functions`.
-- NEVER call `execute_code` when a `cache_id` for the same operation is in context.
+## Additional rules
+
 - Keep `execute_code` payloads minimal — extract only the fields you need.
-- If execution fails, re-read the `get_functions` output before retrying.
+- description must be generic — "action + entity type", NO specific values or dates.
+- If execution fails, re-read `get_functions` output before retrying.
 """
 
 
@@ -173,17 +177,58 @@ def _build_instructions(
     return _BASE_INSTRUCTIONS + direct_section + skills_section
 
 
+def _apply_params_to_code(code: str, params: dict[str, Any]) -> str:
+    """Inject *params* into cached code by replacing top-level variable assignments.
+
+    For each ``key`` in *params*:
+
+    * If ``key = <anything>`` appears as a **non-indented** assignment anywhere in
+      the code, every such occurrence is replaced with ``key = <new_value>``.
+    * If no such assignment exists, ``key = <new_value>`` is **prepended** so the
+      variable is available when the code references it.
+
+    A ``_params`` dict is also prepended so code can optionally read from it:
+        location = _params.get("location_name", "Colombo")
+
+    This approach works for both code patterns:
+    * ``result``-only code (module-level statements, no ``main()``): the replaced
+      assignment runs with the new value, producing the correct ``result``.
+    * ``main()``-based code with module-level side effects (e.g. geocoding):
+      replacing the variable before the code runs means geocoding uses the new
+      value from the first line, not from the cached original.
+
+    Args:
+        code: Original cached Python source.
+        params: Parameter overrides to inject.
+
+    Returns:
+        Modified Python source ready for re-execution.
+    """
+    for key, value in params.items():
+        # Match non-indented assignment: `key = <anything to EOL>`
+        pattern = rf"^{re.escape(key)}\s*=.*$"
+        replacement = f"{key} = {value!r}"
+        new_code, count = re.subn(pattern, replacement, code, flags=re.MULTILINE)
+        code = new_code if count else f"{key} = {value!r}\n{code}"
+
+    # Prepend full params dict so code can also read from _params directly
+    return f"_params = {params!r}\n{code}"
+
+
 def create_server(
     config: MCEConfig,
     registry: Registry | None = None,
     cache: CacheStore | None = None,
+    executor: CodeExecutor | None = None,
 ) -> FastMCP:
-    """Create and configure the MCE FastMCP server with all 5 tools and 1 prompt.
+    """Create and configure the MCE FastMCP server with all 4 tools and 1 prompt.
 
     Args:
         config: MCE configuration instance.
         registry: Pre-loaded Registry. If None, a new one is created from config.
         cache: Pre-initialized CacheStore. If None, a new one is created from config.
+        executor: Pre-started CodeExecutor. If None, a new one is created — caller is
+            responsible for calling ``executor.startup()`` before requests arrive.
 
     Returns:
         Configured FastMCP server ready to run.
@@ -212,7 +257,8 @@ def create_server(
         instructions=_build_instructions(registry, servers_with_skills, top_level_tools),
     )
 
-    executor = CodeExecutor(config, cache)
+    if executor is None:
+        executor = CodeExecutor(config, cache)
 
     try:
         _sandbox_libraries = [
@@ -329,9 +375,13 @@ def create_server(
 
     @mcp.tool()
     async def execute_code(code: str, description: str) -> dict[str, Any]:
-        """Execute Python code in a sandboxed environment.
+        """Execute Python code in a sandboxed Docker container.
 
-        The code runs in an isolated Docker container with access to API server functions.
+        *** AFTER THIS CALL SUCCEEDS: read the `_next` field in the response. ***
+        It contains the exact `run_cached_code(...)` call to use next time the
+        user asks for the same type of operation with a different value.
+        You MUST use `run_cached_code` — do NOT call `execute_code` again.
+
         Code MUST define either a `main()` function that returns a result,
         or a `result` variable containing the output.
 
@@ -339,41 +389,38 @@ def create_server(
         - Server functions: `from {server_name}.functions import {function_name}`
         - Standard: httpx, json, datetime, re, math, dataclasses, typing, collections
 
-        Args:
-            code: Valid Python code to execute. Must be self-contained.
-            description: Brief description of what this code does (used for caching).
+        ## Code pattern — top-level variables are REQUIRED for reuse
 
-        Run multiple functions in single code block and return result.
-        Returns execution result with data or error details.
-        Keep responses minimal — extract only the fields you need.
-
-        ## Reusable Code Guide
-
-        WRONG — hardcoded value inside main(), not reusable:
+        WRONG — hardcoded inside main(), cannot be reused:
             def main():
                 return geocoding_search(name="Colombo, Sri Lanka")  # BAD
 
         CORRECT — top-level variable, reusable via run_cached_code:
-            location_name = "Colombo, Sri Lanka"   # top-level param
+            location_name = "Colombo, Sri Lanka"   # ← top-level param
 
             def main():
                 return geocoding_search(name=location_name)  # reads global
 
-            result = main()
-
-        After execute_code succeeds, the response contains a `cache_id`.
-        For the next request of the same type with a different value:
-            run_cached_code(cache_id, params={"location_name": "Galle, Sri Lanka"})
-
-        Rules:
-        - ALL dynamic values (city, ID, date, name…) → top-level variables
-        - main() NEVER takes arguments; it reads globals only
-        - description: "action + entity + key param", no specific values or dates
+        Args:
+            code: Valid Python code. ALL dynamic values MUST be top-level variables.
+            description: Generic description — "action + entity type", NO specific
+                values, cities, or dates (e.g. "get hourly weather forecast for city").
         """
         try:
             result = await executor.execute(code, description)
             logger.info("tool_execute_code_called", success=result.success, description=description[:60])
-            return result.model_dump()
+            dump = result.model_dump()
+            if result.success and result.cache_id:
+                # Inject an explicit next-step instruction so the LLM uses
+                # run_cached_code for the next similar request instead of
+                # calling execute_code again.
+                dump["_next"] = (
+                    f"IMPORTANT — for the same operation with different values call: "
+                    f"run_cached_code(cache_id='{result.cache_id}', "
+                    f'params={{"<top_level_variable_name>": "<new_value>"}}) '
+                    f"Do NOT call execute_code again for this type of query."
+                )
+            return dump
         except SecurityViolationError as exc:
             return {"success": False, "error": f"Security violation: {exc}", "error_type": "security"}
         except LintError as exc:
@@ -397,27 +444,23 @@ def create_server(
 
     @mcp.tool()
     async def run_cached_code(cache_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Re-execute a cached code snippet, optionally injecting new parameter values.
+        """Re-run a cached code snippet with new parameter values — use this INSTEAD of execute_code.
 
-        Fetches the original code by cache_id and re-runs it through the full
-        execution pipeline (security scan → sandbox → cached on success).
+        Whenever the user asks for the same type of operation with a different value
+        (different city, date, ID, name…), call this tool with the `cache_id` from
+        the previous `execute_code` response.  Do NOT call `execute_code` again.
 
-        If params are provided, each key-value pair is injected as a top-level
-        variable assignment AND into a `_params` dict BEFORE the cached code runs.
-        This means any global variable in the cached code can be overridden:
+        Each entry in `params` replaces the matching top-level variable in the
+        cached code before execution, so the logic runs fresh with the new values:
 
-            # Cached code references global `output_format`:
-            result = getpublicip(format=output_format)
-
-            # Call with: params={"output_format": "text"}
-            # → injects `output_format = "text"` before the code executes
-
-        Code can also read from `_params` directly for optional values:
-            fmt = _params.get("output_format", "json")
+            # Cached code has: location_name = "Colombo"
+            run_cached_code(cache_id="...", params={"location_name": "Kandy"})
+            # → replaces location_name = "Colombo" with location_name = "Kandy"
+            # → re-runs geocoding + weather fetch for Kandy
 
         Args:
-            cache_id: Cache entry ID from a previous execute_code response.
-            params: Optional key→value overrides injected as top-level variables.
+            cache_id: ID from a previous execute_code or run_cached_code response.
+            params: Top-level variable overrides — {variable_name: new_value}.
 
         Returns:
             Same structure as execute_code: success, data, error, execution_time_ms, cache_id.
@@ -436,12 +479,11 @@ def create_server(
 
         code = entry.code
         if params:
-            # Append AFTER the cached code so param values override any
-            # same-named variable the code sets at module level, then re-call
-            # main() so it reads the updated globals and produces a fresh result.
-            param_lines = "\n".join(f"{k} = {v!r}" for k, v in params.items())
-            rerun = "try:\n    result = main()\nexcept NameError:\n    pass"
-            code = f"{code}\n\n# --- injected parameter overrides ---\n_params = {params!r}\n{param_lines}\n{rerun}\n"
+            # Replace top-level variable assignments for each param key so the
+            # code runs fresh with the new values.  Works for both result-only
+            # code (no main()) and main()-based code with module-level side
+            # effects (e.g. geocoding computed from a location variable).
+            code = _apply_params_to_code(code, params)
 
         logger.info("tool_run_cached_code_called", cache_id=cache_id[:16], has_params=bool(params))
 

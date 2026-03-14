@@ -20,7 +20,14 @@ from mce.errors import (
 from mce.models import ExecutionResult
 from mce.runtime.cache import CacheStore
 from mce.runtime.registry import Registry
-from mce.server import _BASE_INSTRUCTIONS, _build_instructions, _load_top_level_tools, create_server, initialize_server
+from mce.server import (
+    _BASE_INSTRUCTIONS,
+    _apply_params_to_code,
+    _build_instructions,
+    _load_top_level_tools,
+    create_server,
+    initialize_server,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -272,8 +279,8 @@ async def test_get_functions_unexpected_error(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_success_execution() -> ExecutionResult:
-    return ExecutionResult(success=True, data={"result": 42}, execution_time_ms=100)
+def _make_success_execution(cache_id: str | None = "abc123cache") -> ExecutionResult:
+    return ExecutionResult(success=True, data={"result": 42}, execution_time_ms=100, cache_id=cache_id)
 
 
 async def test_execute_code_success(tmp_path: Path) -> None:
@@ -286,6 +293,26 @@ async def test_execute_code_success(tmp_path: Path) -> None:
         result = await _call_tool(mcp, "execute_code", code="result = 42", description="compute 42")
 
     assert result["success"] is True
+    # _next hint must be present with the cache_id so LLM knows to call run_cached_code
+    assert "_next" in result
+    assert "run_cached_code" in result["_next"]
+    assert "abc123cache" in result["_next"]
+
+
+async def test_execute_code_success_no_next_hint_when_no_cache_id(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    with patch(
+        "mce.runtime.executor.CodeExecutor.execute",
+        new=AsyncMock(return_value=_make_success_execution(cache_id=None)),
+    ):
+        result = await _call_tool(mcp, "execute_code", code="result = 42", description="compute 42")
+
+    assert result["success"] is True
+    assert "_next" not in result
 
 
 async def test_execute_code_security_violation(tmp_path: Path) -> None:
@@ -371,6 +398,49 @@ async def test_execute_code_unexpected_error(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _apply_params_to_code helper
+# ---------------------------------------------------------------------------
+
+
+def test_apply_params_replaces_existing_top_level_assignment() -> None:
+    code = 'location_name = "Colombo"\nresult = location_name'
+    out = _apply_params_to_code(code, {"location_name": "Kandy"})
+    assert "location_name = 'Kandy'" in out
+    assert '"Colombo"' not in out
+
+
+def test_apply_params_prepends_when_no_existing_assignment() -> None:
+    code = "result = unknown_var"
+    out = _apply_params_to_code(code, {"unknown_var": 42})
+    lines = out.splitlines()
+    # The prepended assignment should appear before the original code
+    assert any("unknown_var = 42" in line for line in lines)
+    assert "result = unknown_var" in out
+
+
+def test_apply_params_does_not_touch_indented_assignments() -> None:
+    # Indented assignment inside a function must NOT be replaced
+    code = 'def main():\n    location_name = "Colombo"\n    return location_name'
+    out = _apply_params_to_code(code, {"location_name": "Kandy"})
+    # The indented original stays intact; a new top-level assignment is prepended
+    assert '    location_name = "Colombo"' in out
+    assert "location_name = 'Kandy'" in out
+
+
+def test_apply_params_injects_params_dict() -> None:
+    code = "result = 1"
+    out = _apply_params_to_code(code, {"x": 10})
+    assert "_params = {'x': 10}" in out
+
+
+def test_apply_params_result_only_code_uses_new_value() -> None:
+    # Simulates the Colombo→Kandy bug: result-only code with a top-level variable
+    code = 'location_name = "Colombo"\nresult = {"location": location_name}'
+    out = _apply_params_to_code(code, {"location_name": "Kandy"})
+    assert '"Colombo"' not in out
+    assert "'Kandy'" in out
+
+
 # run_cached_code tool
 # ---------------------------------------------------------------------------
 
@@ -422,26 +492,29 @@ async def test_run_cached_code_success(tmp_path: Path) -> None:
     assert result["success"] is True
 
 
-async def test_run_cached_code_with_params_injects_variables(tmp_path: Path) -> None:
+async def test_run_cached_code_with_params_replaces_variable(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     registry = _make_mock_registry()
     cache = _make_mock_cache()
-    cache.get = AsyncMock(return_value=_make_cache_entry("result = output_format", "format code"))
+    # Cached code for "Colombo" — top-level variable that should be replaced
+    cached_source = 'location_name = "Colombo"\nresult = {"location": location_name}'
+    cache.get = AsyncMock(return_value=_make_cache_entry(cached_source, "weather"))
 
     captured_code: list[str] = []
 
     async def fake_execute(code: str, description: str) -> ExecutionResult:
         captured_code.append(code)
-        return ExecutionResult(success=True, data="json", execution_time_ms=50)
+        return ExecutionResult(success=True, data={"location": "Kandy"}, execution_time_ms=50)
 
     mcp = create_server(config, registry=registry, cache=cache)
 
     with patch("mce.runtime.executor.CodeExecutor.execute", new=AsyncMock(side_effect=fake_execute)):
-        await _call_tool(mcp, "run_cached_code", cache_id="abc123", params={"output_format": "json"})
+        await _call_tool(mcp, "run_cached_code", cache_id="abc123", params={"location_name": "Kandy"})
 
     assert len(captured_code) == 1
-    assert "output_format" in captured_code[0]
-    assert "json" in captured_code[0]
+    # "Colombo" must have been replaced — not present anywhere in the executed code
+    assert '"Colombo"' not in captured_code[0]
+    assert "'Kandy'" in captured_code[0]
 
 
 async def test_run_cached_code_security_violation(tmp_path: Path) -> None:

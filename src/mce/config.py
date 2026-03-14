@@ -46,6 +46,10 @@ class MCEConfig(BaseSettings):
     execution_timeout_seconds: int = 30
     max_output_size_bytes: int = 1_048_576  # 1MB
     network_mode: str = "mce_network"
+    # Sandbox execution mode: "warm" (persistent containers, default) or "cold" (new container per request)
+    sandbox_mode: str = "warm"
+    # Number of persistent containers kept alive in warm mode
+    warm_pool_size: int = 2
 
     # Cache
     cache_enabled: bool = True
