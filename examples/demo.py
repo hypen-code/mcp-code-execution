@@ -51,12 +51,13 @@ async def demo() -> None:
         print(f"  Summary: {fn_info.summary}")
         print(f"  Parameters: {[p.name for p in fn_info.parameters]}")
 
-    # Step 3: Search cached code
-    print("\n[3] get_cached_code(search='weather')")
+    # Step 3: Show cached entries (internal — use run_cached_code tool with a cache_id to re-execute)
+    print("\n[3] Checking cache for 'weather' entries (internal demo only)")
     cached = await cache.search("weather")
     if cached:
         for entry in cached[:3]:
-            print(f"  [{entry.id[:12]}] {entry.description} (used {entry.use_count}x)")
+            print(f"  cache_id={entry.id[:12]}  {entry.description} (used {entry.use_count}x)")
+        print("  -> Pass any cache_id above to run_cached_code() with new params.")
     else:
         print("  No cached entries yet. Execute some code first!")
 

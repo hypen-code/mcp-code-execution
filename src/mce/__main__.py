@@ -175,6 +175,7 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
         Exit code.
     """
     from mce.runtime.cache import CacheStore  # noqa: PLC0415
+    from mce.runtime.executor import CodeExecutor  # noqa: PLC0415
     from mce.runtime.registry import Registry  # noqa: PLC0415
     from mce.server import create_server  # noqa: PLC0415
 
@@ -200,17 +201,29 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
         "mce_starting",
         servers=[s.name for s in servers],
         transport=getattr(config_args, "transport", "stdio"),
+        sandbox_mode=config.sandbox_mode,
+        warm_pool_size=config.warm_pool_size if config.sandbox_mode == "warm" else 0,
         host=config.host,
         port=config.port,
     )
 
-    mcp = create_server(config, registry=registry, cache=cache)
-    transport = getattr(config_args, "transport", "stdio")
+    # Start executor (creates warm container pool if sandbox_mode=warm).
+    # startup() is inside the try so shutdown() always runs — even if startup
+    # fails mid-way (e.g. first container created, second raises), ensuring
+    # no warm containers are left orphaned in Docker.
+    executor = CodeExecutor(config, cache)
+    try:
+        await executor.startup()
+        mcp = create_server(config, registry=registry, cache=cache, executor=executor)
+        transport = getattr(config_args, "transport", "stdio")
 
-    if transport == "stdio":
-        await mcp.run_stdio_async()
-    else:
-        await mcp.run_http_async(host=config.host, port=config.port)
+        if transport == "stdio":
+            await mcp.run_stdio_async()
+        else:
+            await mcp.run_http_async(host=config.host, port=config.port)
+    finally:
+        # Stop and remove all warm containers, close Docker client
+        await executor.shutdown()
 
     return 0
 

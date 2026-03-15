@@ -248,6 +248,8 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_EXECUTION_TIMEOUT_SECONDS` | `30` | Max code execution time |
 | `MCE_MAX_OUTPUT_SIZE_BYTES` | `1048576` | Max sandbox stdout size (1 MB) |
 | `MCE_NETWORK_MODE` | `mce_network` | Docker network for sandbox containers |
+| `MCE_SANDBOX_MODE` | `warm` | Execution mode: `warm` (persistent container pool) or `cold` (new container per request) |
+| `MCE_WARM_POOL_SIZE` | `2` | Number of persistent containers to pre-create in warm mode |
 | `MCE_CACHE_ENABLED` | `true` | Enable code caching |
 | `MCE_CACHE_TTL_SECONDS` | `3600` | Cache entry lifetime |
 | `MCE_CACHE_MAX_ENTRIES` | `500` | Maximum cached entries before LRU eviction |
@@ -255,8 +257,170 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_MAX_CODE_SIZE_BYTES` | `65536` | Maximum allowed code size (64 KB) |
 | `MCE_ALLOWED_DOMAINS` | — | Comma-separated API domain allowlist (empty = allow all) |
 | `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
-| `MCE_{SERVER}_AUTH` | — | Auth header per server (e.g. `Authorization: Bearer <token>`) |
+| `MCE_{SERVER}_AUTH` | — | Auth header per server — set automatically from `auth:` config; or set directly (e.g. `Bearer <token>`) for servers without a typed auth block |
 | `MCE_{SERVER}_EXTRA_HEADERS` | — | JSON object of custom HTTP headers per server (e.g. `{"X-Version":"v1"}`) |
+
+### Sandbox Execution Mode
+
+MCE talks to Docker exclusively through **[aiodocker](https://github.com/aio-libs/aiodocker)** — a fully async Python client that never blocks the asyncio event loop. Two execution modes are available, switchable at any time via `MCE_SANDBOX_MODE`.
+
+#### Warm mode (default — `MCE_SANDBOX_MODE=warm`)
+
+A pool of `MCE_WARM_POOL_SIZE` containers is created at server startup. Each container idles with `tail -f /dev/null`. Per request, a container is borrowed from the pool, `docker exec` runs the entrypoint inside it, and the container is returned for the next request. Cold-start overhead is paid **once at startup**, not per call.
+
+Code is delivered via the `MCE_EXEC_CODE` environment variable (base64-encoded) so no interactive stdin pipe is required — making `exec` both simple and reliable.
+
+```
+mce serve          ← startup: 2 containers created, pool ready
+                      ~200 ms one-time cost
+
+execute_code(…)    ← borrow container → exec entrypoint → return container
+                      ~5–30 ms (no cold start)
+
+execute_code(…)    ← borrow container → exec entrypoint → return container
+                      ~5–30 ms again
+```
+
+**Pros:**
+- Eliminates per-request container cold-start latency (~100–400 ms per call on a fast machine)
+- Consistent low latency under concurrent load — containers are recycled, not re-created
+- Fewer Docker API calls (no create/delete per request)
+
+**Cons:**
+- Uses more memory: each idle container occupies ~50 MB. With `MCE_WARM_POOL_SIZE=2` that is ~100 MB baseline
+- Filesystem state in `/tmp` (tmpfs) persists across consecutive requests within the same container. User code is executed in a fresh Python namespace each time, so there is no Python-level state leakage — only files deliberately written to `/tmp` could survive between execs
+- If a warm container is killed (e.g., OOM), the in-flight request fails and the container is not automatically replaced until the next server restart
+- Requires Docker to be healthy at startup — if the daemon is unreachable, the server will not start
+
+#### Cold mode (`MCE_SANDBOX_MODE=cold`)
+
+A brand-new container is created for every `execute_code` call, started, waited on, then deleted. Complete filesystem and process isolation between every request.
+
+**Pros:**
+- Perfect per-request isolation — no shared state of any kind between requests
+- Simpler failure model: a crashed container has zero effect on future requests
+- No persistent resource usage between requests
+
+**Cons:**
+- Higher latency per request: container startup adds ~100–400 ms on a fast host and can exceed 1 s if Docker's image cache is cold
+- More Docker churn (create + delete per request) under high load
+
+#### Choosing a mode
+
+| | Warm | Cold |
+|---|---|---|
+| Per-request latency | ~5–30 ms | ~150–500 ms |
+| Memory overhead | ~50 MB × pool size | None at rest |
+| Isolation | Namespace-level | Container-level |
+| Best for | Interactive / latency-sensitive use | Batch / security-critical use |
+
+For most deployments the default warm mode is the right choice. Switch to cold if you need the strongest possible per-request isolation or if memory is constrained.
+
+### Authentication
+
+MCE supports six auth types, configured per-server in `config/swaggers.yaml`. Tokens for dynamic types (OAuth2, Keycloak, Session) are **fetched automatically** and cached with TTL — no manual rotation required.
+
+| Type | Header set | Use when |
+|---|---|---|
+| `static` | `Authorization` | API key or pre-built `Bearer`/`Basic` header |
+| `jwt` | `Authorization` | You have a raw JWT string (auto-wrapped as `Bearer <token>`) |
+| `oauth2` | `Authorization` | Any OAuth2 server with a standard `/token` endpoint (client credentials) |
+| `keycloak` | `Authorization` | Keycloak OIDC — token URL built from `base_url` + `realm` |
+| `session` | `Cookie` (or `Authorization`) | Apps that use HTTP cookie sessions (JSESSIONID, PHPSESSID, etc.) |
+| _(none)_ | — | Public API — no auth header injected |
+
+```yaml
+servers:
+  # Static API key or Basic auth (legacy format, still works)
+  - name: grafana
+    swagger_url: "https://grafana.local/openapi.json"
+    base_url: "https://grafana.local/api"
+    auth_header: "Bearer ${GRAFANA_TOKEN}"   # resolved from env at runtime
+
+  # Explicit static header (typed form)
+  - name: my_api
+    swagger_url: "./swagger.yaml"
+    base_url: "https://api.example.com"
+    auth:
+      type: static
+      value: "Bearer ${MY_API_TOKEN}"
+
+  # Raw JWT — MCE prepends "Bearer " automatically
+  - name: ivf_api
+    swagger_url: "./ivf-api.yaml"
+    base_url: "https://ivf.example.com/api"
+    auth:
+      type: jwt
+      token: "${IVF_JWT_TOKEN}"
+
+  # Generic OAuth2 client credentials
+  - name: salesforce
+    swagger_url: "./salesforce.yaml"
+    base_url: "https://instance.salesforce.com/services/data/v58.0"
+    auth:
+      type: oauth2
+      token_url: "https://login.salesforce.com/services/oauth2/token"
+      client_id: "3MVG9..."
+      client_secret: "${SALESFORCE_CLIENT_SECRET}"
+      scope: "api"              # optional
+
+  # Keycloak OIDC — token URL is auto-built as:
+  # {base_url}/realms/{realm}/protocol/openid-connect/token
+  - name: hospital_api
+    swagger_url: "./hospital-api.yaml"
+    base_url: "https://hospital.example.com/api"
+    auth:
+      type: keycloak
+      base_url: "https://keycloak.example.com/auth"
+      realm: "myrealm"
+      client_id: "mce-client"
+      client_secret: "${KEYCLOAK_CLIENT_SECRET}"
+      scope: "openid"           # optional
+
+  # Session-cookie auth — POSTs credentials and caches the session cookie
+  # Variant A: collect all cookies (e.g. Java/Spring JSESSIONID)
+  - name: spring_app
+    swagger_url: "./spring-api.yaml"
+    base_url: "https://spring.example.com/api"
+    auth:
+      type: session
+      login_url: "https://spring.example.com/login"
+      username: "${SPRING_USER}"
+      password: "${SPRING_PASS}"
+      # cookie_name: "JSESSIONID"   # optional: extract only this cookie; default = all cookies
+      # content_type: form          # optional: "json" (default) or "form" for the login POST
+      # expires_seconds: 3600       # optional: session TTL for caching (default 3600)
+
+  # Session auth — Variant B: login endpoint returns a token in the JSON body
+  - name: custom_api
+    swagger_url: "./custom-api.yaml"
+    base_url: "https://custom.example.com/api"
+    auth:
+      type: session
+      login_url: "https://custom.example.com/api/auth/login"
+      username: "${CUSTOM_USER}"
+      password: "${CUSTOM_PASS}"
+      token_field: "access_token"   # sets Authorization: Bearer <value> instead of Cookie
+```
+
+#### Session auth — how it works
+
+```
+mce serve startup (or execute_code call)
+  └── vault.py: POST login_url with {username, password}
+        └── Variant A (cookie): response Set-Cookie header → MCE_{SERVER}_COOKIE
+        └── Variant B (token_field): response JSON body   → MCE_{SERVER}_AUTH
+
+Docker container env injection
+  └── MCE_{SERVER}_COOKIE=JSESSIONID=abc123     → Cookie: JSESSIONID=abc123
+  └── MCE_{SERVER}_AUTH=Bearer jwt-token-here   → Authorization: Bearer jwt-token-here
+```
+
+All `password`, `client_secret`, and `token` values support `${VAR}` references resolved from the host environment. Dynamic tokens are cached with a 30-second safety margin:
+- **OAuth2/Keycloak**: cached for `expires_in` seconds returned by the token endpoint
+- **Session**: cached for `expires_seconds` (configurable, default 3600 s)
+
+The login or token endpoint is only called when the cache is empty or expired.
 
 ### Swagger Config (`config/swaggers.yaml`)
 
@@ -265,23 +429,23 @@ servers:
   - name: weather
     swagger_url: "https://api.weather.example.com/v1/openapi.json"
     base_url: "https://api.weather.example.com/v1"
-    auth_header: "${WEATHER_API_KEY}"   # Resolved from env
-    is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
-    skills_url: "./docs/weather_skills.md"  # Optional: server skills guide (see below)
-    extra_headers:                      # Optional: custom headers injected on every request
+    auth_header: "Bearer ${WEATHER_API_KEY}"  # or use typed auth: block above
+    is_read_only: true                         # Omit POST/PUT/PATCH/DELETE at compile time
+    skills_url: "./docs/weather_skills.md"     # Optional: server skills guide (see below)
+    extra_headers:                             # Optional: custom headers injected on every request
       X-API-Version: "v1"
       X-Custom-Header: "value"
 
   - name: hotel_booking
-    swagger_url: "./swaggers/hotel.yaml"   # Local file paths are supported
+    swagger_url: "./swaggers/hotel.yaml"       # Local file paths are supported
     base_url: "https://api.hotel.example.com/v2"
     auth_header: "Bearer ${HOTEL_API_TOKEN}"
     is_read_only: false
-    top_level_functions:                   # Optional: expose selected functions as direct MCP tools
+    top_level_functions:                       # Optional: expose selected functions as direct MCP tools
       - getAvailableRooms
 ```
 
-> If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
+> If `auth_header` and `auth` are both omitted, the server is treated as a public API — no `Authorization` header is injected.
 
 > `extra_headers` are serialized to `MCE_{SERVER}_EXTRA_HEADERS` (JSON string) at compile time and injected into every generated function call.
 
@@ -466,8 +630,8 @@ flowchart TD
     classDef sandboxNode fill:#1a3a2a,stroke:#4caf82,stroke-width:2px,color:#d0ffe8
 
     ENV[".env / host environment\nMCE_WEATHER_AUTH=Authorization: Bearer sk-secret MCE_WEATHER_BASE_URL=https://api.weather.example.com/v1"]:::envNode
-    VAULT["CodeExecutor._run_in_docker()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
-    DOCKER["docker run -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
+    VAULT["CodeExecutor._run_warm() / _run_cold()\nbuild_all_server_env_vars([&quot;weather&quot;])"]:::vaultNode
+    DOCKER["aiodocker exec/create -e MCE_WEATHER_AUTH=...\n-e MCE_WEATHER_BASE_URL=..."]:::dockerNode
     SANDBOX["compiled/weather/functions.py (inside sandbox)\n_AUTH_HEADER = os.environ.get(&quot;MCE_WEATHER_AUTH&quot;, &quot;&quot;) _EXTRA_HEADERS = json.loads(os.environ.get(&quot;MCE_WEATHER_EXTRA_HEADERS&quot;, &quot;{}&quot;))"]:::sandboxNode
 
     ENV    -->|"1: vault.py reads credentials at execution time"| VAULT
@@ -491,9 +655,15 @@ When `MCE_LLM_ENHANCE=true`, the compiler sends the generated `functions.py` sou
 
 - Store secrets in `.env` or your system's environment — never in `config/swaggers.yaml` as literal values. Use `${VAR_NAME}` references instead:
   ```yaml
-  auth_header: "Bearer ${MY_API_TOKEN}"   # safe — resolved at runtime
-  # auth_header: "Bearer sk-actual-secret" # unsafe — literal value
+  auth_header: "Bearer ${MY_API_TOKEN}"      # safe — resolved at runtime
+  # auth_header: "Bearer sk-actual-secret"   # unsafe — literal value
+
+  auth:
+    type: keycloak
+    client_secret: "${KEYCLOAK_SECRET}"      # safe — resolved from env
+    # client_secret: "my-actual-secret"      # unsafe — literal value
   ```
+- For OAuth2/Keycloak servers, the token is fetched and cached host-side in vault.py — the LLM-generated sandbox code never sees the `client_secret` or the fetched access token directly.
 - Never pass credentials as arguments to `execute_code`. The LLM-generated code should only call the pre-built functions (e.g. `get_current_weather(city="London")`), which handle auth internally.
 - The generated `functions.py` files in `compiled/` contain only env var name references, not values — they are safe to inspect or commit.
 

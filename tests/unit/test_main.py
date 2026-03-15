@@ -284,10 +284,15 @@ async def test_cmd_serve_stdio_transport(tmp_path: Path) -> None:
     mock_mcp = AsyncMock()
     mock_mcp.run_stdio_async = AsyncMock()
 
+    mock_executor = AsyncMock()
+    mock_executor.startup = AsyncMock()
+    mock_executor.shutdown = AsyncMock()
+
     with (
         patch("mce.__main__.load_config") as mock_cfg,
         patch("mce.runtime.cache.CacheStore", return_value=mock_cache),
         patch("mce.runtime.registry.Registry", return_value=mock_registry),
+        patch("mce.runtime.executor.CodeExecutor", return_value=mock_executor),
         patch("mce.server.create_server", return_value=mock_mcp),
     ):
         cfg = MagicMock()
@@ -321,10 +326,15 @@ async def test_cmd_serve_http_transport(tmp_path: Path) -> None:
     mock_mcp = AsyncMock()
     mock_mcp.run_http_async = AsyncMock()
 
+    mock_executor = AsyncMock()
+    mock_executor.startup = AsyncMock()
+    mock_executor.shutdown = AsyncMock()
+
     with (
         patch("mce.__main__.load_config") as mock_cfg,
         patch("mce.runtime.cache.CacheStore", return_value=mock_cache),
         patch("mce.runtime.registry.Registry", return_value=mock_registry),
+        patch("mce.runtime.executor.CodeExecutor", return_value=mock_executor),
         patch("mce.server.create_server", return_value=mock_mcp),
     ):
         cfg = MagicMock()
@@ -358,10 +368,15 @@ async def test_cmd_serve_overrides_host_and_port(tmp_path: Path) -> None:
     mock_mcp = AsyncMock()
     mock_mcp.run_stdio_async = AsyncMock()
 
+    mock_executor = AsyncMock()
+    mock_executor.startup = AsyncMock()
+    mock_executor.shutdown = AsyncMock()
+
     with (
         patch("mce.__main__.load_config") as mock_cfg,
         patch("mce.runtime.cache.CacheStore", return_value=mock_cache),
         patch("mce.runtime.registry.Registry", return_value=mock_registry),
+        patch("mce.runtime.executor.CodeExecutor", return_value=mock_executor),
         patch("mce.server.create_server", return_value=mock_mcp),
     ):
         cfg = MagicMock()

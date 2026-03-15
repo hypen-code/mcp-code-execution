@@ -28,6 +28,7 @@ repos:
           - structlog>=24.0.0
           - types-PyYAML>=6.0
           - pytest>=7.2
+          - respx>=0.21.0
 
   # --- Pytest with mandatory coverage >= 90% --------------------------------
   - repo: local

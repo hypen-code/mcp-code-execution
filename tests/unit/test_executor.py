@@ -1,4 +1,4 @@
-"""Unit tests for the CodeExecutor — uses mocks to avoid real Docker."""
+"""Unit tests for CodeExecutor — mocks aiodocker so no real Docker daemon is needed."""
 
 from __future__ import annotations
 
@@ -7,21 +7,21 @@ import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
-import pytest
-
 from mce.config import MCEConfig
 from mce.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
-from mce.runtime.executor import CodeExecutor, _detect_servers_used
+from mce.runtime.executor import CodeExecutor, _detect_servers_used, _WarmPool
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path: Path) -> MCEConfig:
+def _make_config(tmp_path: Path, *, sandbox_mode: str = "cold") -> MCEConfig:
     return MCEConfig(
         compiled_output_dir=str(tmp_path / "compiled"),
         cache_db_path=str(tmp_path / "data" / "cache.db"),
@@ -32,6 +32,8 @@ def _make_config(tmp_path: Path) -> MCEConfig:
         debug=True,
         docker_image="mce-sandbox:latest",
         max_code_size_bytes=65_536,
+        sandbox_mode=sandbox_mode,
+        warm_pool_size=1,
     )
 
 
@@ -39,6 +41,13 @@ def _make_mock_cache() -> AsyncMock:
     cache = AsyncMock()
     cache.store = AsyncMock(return_value="fake-cache-id-abc123")
     return cache
+
+
+def _make_docker_mock() -> MagicMock:
+    """Return a MagicMock that mimics an aiodocker.Docker client."""
+    docker = MagicMock()
+    docker.close = AsyncMock()
+    return docker
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +67,7 @@ def test_detect_servers_used_import_style() -> None:
 
 def test_detect_servers_used_multiple_servers() -> None:
     code = "from weather.functions import fn\nfrom hotel.functions import book"
-    servers = _detect_servers_used(code)
-    assert sorted(servers) == ["hotel", "weather"]
+    assert sorted(_detect_servers_used(code)) == ["hotel", "weather"]
 
 
 def test_detect_servers_used_no_server_imports() -> None:
@@ -83,6 +91,109 @@ def test_executor_init(tmp_path: Path) -> None:
     executor = CodeExecutor(config, cache)
     assert executor._config is config
     assert executor._cache is cache
+    assert executor._docker is None
+
+
+# ---------------------------------------------------------------------------
+# startup / shutdown
+# ---------------------------------------------------------------------------
+
+
+async def test_startup_cold_mode_opens_docker(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    with patch("aiodocker.Docker") as mock_docker_cls:
+        mock_client = _make_docker_mock()
+        mock_docker_cls.return_value = mock_client
+        await executor.startup()
+
+    assert executor._docker is mock_client
+    assert executor._warm_pool is None
+
+
+async def test_startup_warm_mode_creates_pool(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    mock_container = AsyncMock()
+    mock_container.id = "abc123def456"
+    mock_container.start = AsyncMock()
+
+    mock_containers_api = AsyncMock()
+    mock_containers_api.create = AsyncMock(return_value=mock_container)
+    mock_containers_api.list = AsyncMock(return_value=[])  # no stale containers
+
+    mock_client = _make_docker_mock()
+    mock_client.containers = mock_containers_api
+
+    with patch("aiodocker.Docker", return_value=mock_client):
+        await executor.startup()
+
+    assert executor._warm_pool is not None
+    mock_containers_api.create.assert_awaited_once()
+
+
+async def test_startup_warm_mode_removes_stale_containers(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    stale = AsyncMock()
+    stale.id = "stale000dead"
+    stale.delete = AsyncMock()
+
+    fresh = AsyncMock()
+    fresh.id = "fresh111alive"
+    fresh.start = AsyncMock()
+
+    mock_containers_api = AsyncMock()
+    mock_containers_api.list = AsyncMock(return_value=[stale])
+    mock_containers_api.create = AsyncMock(return_value=fresh)
+
+    mock_client = _make_docker_mock()
+    mock_client.containers = mock_containers_api
+
+    with patch("aiodocker.Docker", return_value=mock_client):
+        await executor.startup()
+
+    stale.delete.assert_awaited_once_with(force=True)
+
+
+async def test_shutdown_closes_docker_client(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    mock_client = _make_docker_mock()
+    executor._docker = mock_client
+
+    await executor.shutdown()
+
+    mock_client.close.assert_awaited_once()
+    assert executor._docker is None
+
+
+async def test_shutdown_stops_warm_containers(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    mock_container = AsyncMock()
+    mock_container.id = "abc123def456"
+    mock_container.delete = AsyncMock()
+
+    # shutdown() iterates _warm_containers (all created), not _warm_pool (idle only)
+    executor._warm_containers = [mock_container]
+    executor._docker = _make_docker_mock()
+
+    await executor.shutdown()
+
+    mock_container.delete.assert_awaited_once_with(force=True)
+    assert executor._warm_containers == []
+
+
+async def test_shutdown_safe_when_startup_not_called(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executor = CodeExecutor(config, _make_mock_cache())
+    await executor.shutdown()  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +202,6 @@ def test_executor_init(tmp_path: Path) -> None:
 
 
 def test_lint_code_skips_when_ruff_not_found(tmp_path: Path) -> None:
-    """If ruff is not in PATH, linting is skipped (no LintError)."""
     config = _make_config(tmp_path)
     executor = CodeExecutor(config, _make_mock_cache())
     with patch("subprocess.run", side_effect=FileNotFoundError("ruff not found")):
@@ -200,90 +310,182 @@ def test_parse_output_traceback_hidden_in_non_debug_mode(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# _run_in_docker — mocked subprocess
+# _run_cold — mocked aiodocker
 # ---------------------------------------------------------------------------
 
 
-def _make_successful_docker_result(output: str) -> MagicMock:
-    mock = MagicMock()
-    mock.returncode = 0
-    mock.stdout = output.encode("utf-8")
-    mock.stderr = b""
-    return mock
+def _make_cold_container_mock(stdout_output: str, exit_code: int = 0) -> AsyncMock:
+    """Build a mock aiodocker container for cold-mode tests."""
+    container = AsyncMock()
+    container.start = AsyncMock()
+    container.wait = AsyncMock(return_value={"StatusCode": exit_code})
+    container.log = AsyncMock(side_effect=lambda stdout, stderr: [stdout_output] if stdout else [])
+    container.delete = AsyncMock()
+    return container
 
 
-def test_run_in_docker_success(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_run_cold_success(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     executor = CodeExecutor(config, _make_mock_cache())
+
     payload = json.dumps({"success": True, "data": "ok"})
-    with patch("subprocess.run", return_value=_make_successful_docker_result(payload)):
-        output = executor._run_in_docker("print('hello')", [])
+    mock_container = _make_cold_container_mock(payload)
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
+
+    output = await executor._run_cold("result = 'ok'", [])
     assert "ok" in output
 
 
-def test_run_in_docker_timeout_raises(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_run_cold_timeout_raises(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     executor = CodeExecutor(config, _make_mock_cache())
-    with (
-        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=10)),
-        pytest.raises(ExecutionTimeoutError),
-    ):
-        executor._run_in_docker("import time; time.sleep(999)", [])
+
+    mock_container = AsyncMock()
+    mock_container.start = AsyncMock()
+    mock_container.wait = AsyncMock(side_effect=TimeoutError())
+    mock_container.delete = AsyncMock()
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
+
+    with pytest.raises(ExecutionTimeoutError):
+        await executor._run_cold("import time; time.sleep(999)", [])
 
 
-def test_run_in_docker_file_not_found_raises(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_run_cold_docker_create_error_raises(tmp_path: Path) -> None:
+    import aiodocker.exceptions  # noqa: PLC0415
+
+    config = _make_config(tmp_path, sandbox_mode="cold")
     executor = CodeExecutor(config, _make_mock_cache())
-    with (
-        patch("subprocess.run", side_effect=FileNotFoundError("docker not found")),
-        pytest.raises(ExecutionError, match="docker CLI not found"),
-    ):
-        executor._run_in_docker("result = 1", [])
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(
+        side_effect=aiodocker.exceptions.DockerError(status=500, message="server error")
+    )
+    executor._docker = mock_docker
+
+    with pytest.raises(ExecutionError):
+        await executor._run_cold("result = 1", [])
 
 
-def test_run_in_docker_nonzero_exit_raises_execution_error(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_run_cold_nonzero_exit_raises_execution_error(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     executor = CodeExecutor(config, _make_mock_cache())
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_result.stdout = b""
-    mock_result.stderr = b"runtime error"
-    with patch("subprocess.run", return_value=mock_result), pytest.raises(ExecutionError):
-        executor._run_in_docker("result = 1", [])
+
+    mock_container = AsyncMock()
+    mock_container.start = AsyncMock()
+    mock_container.wait = AsyncMock(return_value={"StatusCode": 137})
+    mock_container.log = AsyncMock(side_effect=lambda stdout, stderr: ["OOM killed"] if stderr else [])
+    mock_container.delete = AsyncMock()
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
+
+    with pytest.raises(ExecutionError):
+        await executor._run_cold("result = 1", [])
 
 
-def test_run_in_docker_image_not_found_raises(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_run_cold_container_deleted_on_success(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     executor = CodeExecutor(config, _make_mock_cache())
-    mock_result = MagicMock()
-    mock_result.returncode = 125
-    mock_result.stdout = b""
-    mock_result.stderr = b"Unable to find image 'mce-sandbox:latest'"
-    with patch("subprocess.run", return_value=mock_result), pytest.raises(ExecutionError, match="not found"):
-        executor._run_in_docker("result = 1", [])
 
-
-def test_run_in_docker_with_docker_host(tmp_path: Path) -> None:
-    """docker_host config causes -H flag in command."""
-    config = _make_config(tmp_path)
-    config.docker_host = "unix:///var/run/docker.sock"
-    executor = CodeExecutor(config, _make_mock_cache())
     payload = json.dumps({"success": True, "data": None})
-    captured_cmd: list[str] = []
+    mock_container = _make_cold_container_mock(payload)
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        captured_cmd.extend(cmd)
-        m = MagicMock()
-        m.returncode = 0
-        m.stdout = payload.encode()
-        m.stderr = b""
-        return m
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
 
-    with patch("subprocess.run", side_effect=fake_run):
-        executor._run_in_docker("result = 1", [])
+    await executor._run_cold("result = None", [])
+    mock_container.delete.assert_awaited_once()
 
-    assert "-H" in captured_cmd
-    assert "unix:///var/run/docker.sock" in captured_cmd
+
+# ---------------------------------------------------------------------------
+# _run_warm — mocked aiodocker exec
+# ---------------------------------------------------------------------------
+
+
+def _make_exec_stream_mock(stdout_bytes: bytes) -> AsyncMock:
+    """Return a mock async context manager that yields one stdout frame then EOF."""
+
+    class _Msg:
+        def __init__(self, data: bytes) -> None:
+            self.stream = 1  # stdout
+            self.data = data
+
+    stream = AsyncMock()
+    stream.read_out = AsyncMock(side_effect=[_Msg(stdout_bytes), None])
+    stream.__aenter__ = AsyncMock(return_value=stream)
+    stream.__aexit__ = AsyncMock(return_value=None)
+    return stream
+
+
+async def test_run_warm_success(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    payload = json.dumps({"success": True, "data": {"result": 42}})
+    stream = _make_exec_stream_mock(payload.encode())
+
+    exec_obj = AsyncMock()
+    exec_obj.start = MagicMock(return_value=stream)
+
+    mock_container = AsyncMock()
+    mock_container.id = "warmcontainerid"
+    mock_container.exec = AsyncMock(return_value=exec_obj)
+
+    warm_pool = _WarmPool()
+    await warm_pool.push(mock_container)
+    executor._warm_pool = warm_pool
+    executor._docker = _make_docker_mock()
+
+    output = await executor._run_warm("result = 42", [])
+    assert "42" in output
+
+
+async def test_run_warm_container_returned_to_pool_after_exec(tmp_path: Path) -> None:
+    """Container must be returned to the pool even on success."""
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    payload = json.dumps({"success": True, "data": None})
+    stream = _make_exec_stream_mock(payload.encode())
+    exec_obj = AsyncMock()
+    exec_obj.start = MagicMock(return_value=stream)
+
+    mock_container = AsyncMock()
+    mock_container.id = "warmid"
+    mock_container.exec = AsyncMock(return_value=exec_obj)
+
+    warm_pool = _WarmPool()
+    await warm_pool.push(mock_container)
+    executor._warm_pool = warm_pool
+    executor._docker = _make_docker_mock()
+
+    await executor._run_warm("result = None", [])
+
+    assert warm_pool._queue.qsize() == 1
+
+
+async def test_run_warm_all_busy_raises(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    executor._warm_pool = _WarmPool()  # empty pool
+    executor._docker = _make_docker_mock()
+
+    with pytest.raises(ExecutionError, match="busy"), patch("asyncio.wait_for", side_effect=TimeoutError()):
+        await executor._run_warm("result = 1", [])
 
 
 # ---------------------------------------------------------------------------
@@ -291,68 +493,73 @@ def test_run_in_docker_with_docker_host(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_execute_raises_if_startup_not_called(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executor = CodeExecutor(config, _make_mock_cache())
+    with pytest.raises(ExecutionError, match="startup"):
+        await executor.execute("result = 1", "test")
+
+
 async def test_execute_raises_security_error_for_oversized_code(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     config.max_code_size_bytes = 10
     executor = CodeExecutor(config, _make_mock_cache())
-    big_code = "x = 1" * 100
+    executor._docker = _make_docker_mock()
     with pytest.raises(SecurityViolationError, match="exceeds limit"):
-        await executor.execute(big_code, "big code")
+        await executor.execute("x = 1" * 100, "big code")
 
 
 async def test_execute_raises_security_error_for_dangerous_imports(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executor = CodeExecutor(config, _make_mock_cache())
-    dangerous_code = "import subprocess\nresult = subprocess.run(['rm', '-rf', '/'])"
+    executor._docker = _make_docker_mock()
+    dangerous = "import subprocess\nresult = subprocess.run(['rm', '-rf', '/'])"
     with pytest.raises(SecurityViolationError):
-        await executor.execute(dangerous_code, "dangerous code")
+        await executor.execute(dangerous, "dangerous code")
 
 
-async def test_execute_full_happy_path(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_execute_cold_happy_path(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     config.lint_enabled = True
     cache = _make_mock_cache()
     executor = CodeExecutor(config, cache)
 
+    docker_output = json.dumps({"success": True, "data": {"result": 42}})
+    mock_container = _make_cold_container_mock(docker_output)
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
+
     ruff_result = MagicMock()
     ruff_result.returncode = 0
 
-    docker_output = json.dumps({"success": True, "data": {"result": 42}})
-    docker_result = MagicMock()
-    docker_result.returncode = 0
-    docker_result.stdout = docker_output.encode()
-    docker_result.stderr = b""
-
-    with patch("subprocess.run") as mock_run:
-        # First call = ruff lint, second call = docker
-        mock_run.side_effect = [ruff_result, docker_result]
+    with patch("subprocess.run", return_value=ruff_result):
         result = await executor.execute("result = 42", "compute 42")
 
     assert result.success is True
     assert result.data == {"result": 42}
     assert result.cache_id is not None
+    cache.store.assert_awaited_once()
 
 
-async def test_execute_cache_disabled_no_store(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
+async def test_execute_cold_cache_disabled_no_store(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
     config.cache_enabled = False
-    config.lint_enabled = True
     cache = _make_mock_cache()
     executor = CodeExecutor(config, cache)
 
-    ruff_result = MagicMock()
-    ruff_result.returncode = 0
-    docker_output = json.dumps({"success": True, "data": "ok"})
-    docker_result = MagicMock()
-    docker_result.returncode = 0
-    docker_result.stdout = docker_output.encode()
-    docker_result.stderr = b""
+    payload = json.dumps({"success": True, "data": "ok"})
+    mock_container = _make_cold_container_mock(payload)
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = [ruff_result, docker_result]
-        result = await executor.execute("result = 'ok'", "ok code")
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
 
-    # cache.store should NOT have been called
+    result = await executor.execute("result = 'ok'", "ok code")
+
     cache.store.assert_not_awaited()
     assert result.cache_id is None
 
@@ -365,7 +572,6 @@ async def test_execute_cache_disabled_no_store(tmp_path: Path) -> None:
 def test_compute_swagger_hash_returns_unknown_on_missing_dir(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executor = CodeExecutor(config, _make_mock_cache())
-    # compiled dir doesn't exist → fallback to "unknown"
     result = executor._compute_swagger_hash(["nonexistent_server"])
     assert result in ("unknown", "no-servers")
 
@@ -373,5 +579,4 @@ def test_compute_swagger_hash_returns_unknown_on_missing_dir(tmp_path: Path) -> 
 def test_compute_swagger_hash_no_servers_returns_no_servers(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executor = CodeExecutor(config, _make_mock_cache())
-    result = executor._compute_swagger_hash([])
-    assert result == "no-servers"
+    assert executor._compute_swagger_hash([]) == "no-servers"

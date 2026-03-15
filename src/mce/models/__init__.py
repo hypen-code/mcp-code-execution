@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -60,6 +60,72 @@ class ServerSpec(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Auth config models (discriminated union)
+# ---------------------------------------------------------------------------
+
+
+class StaticAuthConfig(BaseModel):
+    """Static Authorization header value — passed through as-is (supports ${VAR} refs)."""
+
+    type: Literal["static"] = "static"
+    value: str  # e.g. "Bearer glsa_xxx" or "Basic base64=="
+
+
+class JwtAuthConfig(BaseModel):
+    """Static JWT token — wrapped as 'Bearer <token>' at resolution time."""
+
+    type: Literal["jwt"] = "jwt"
+    token: str  # raw JWT string; supports ${VAR} references
+
+
+class OAuth2AuthConfig(BaseModel):
+    """OAuth2 client credentials flow — token is fetched and cached automatically."""
+
+    type: Literal["oauth2"] = "oauth2"
+    token_url: str
+    client_id: str
+    client_secret: str  # supports ${VAR} references
+    scope: str = ""
+
+
+class KeycloakAuthConfig(BaseModel):
+    """Keycloak OIDC client credentials — token URL is built from base_url + realm."""
+
+    type: Literal["keycloak"] = "keycloak"
+    base_url: str  # e.g. https://keycloak.example.com/auth
+    realm: str
+    client_id: str
+    client_secret: str  # supports ${VAR} references
+    scope: str = ""
+
+
+class SessionAuthConfig(BaseModel):
+    """Session-based auth — logs in and caches the session cookie or bearer token.
+
+    Covers apps that use HTTP cookies for auth (e.g. JSESSIONID, PHPSESSID, custom
+    session tokens). POSTs credentials to login_url; the response cookie (or a token
+    field in the JSON body) is extracted and cached for expires_seconds.
+    """
+
+    type: Literal["session"] = "session"
+    login_url: str  # POST endpoint to authenticate
+    username: str  # supports ${VAR} references
+    password: str  # supports ${VAR} references
+    username_field: str = "username"  # request body field name for username
+    password_field: str = "password"  # request body field name for password
+    content_type: Literal["json", "form"] = "json"  # login request encoding
+    cookie_name: str = ""  # extract a specific cookie; empty = collect all cookies
+    token_field: str = ""  # if set, extract Bearer token from this JSON response field
+    expires_seconds: int = 3600  # session TTL (cookies have no standard expiry header)
+
+
+AuthConfig = Annotated[
+    StaticAuthConfig | JwtAuthConfig | OAuth2AuthConfig | KeycloakAuthConfig | SessionAuthConfig,
+    Field(discriminator="type"),
+]
+
+
+# ---------------------------------------------------------------------------
 # Swagger source config model
 # ---------------------------------------------------------------------------
 
@@ -70,7 +136,8 @@ class SwaggerSource(BaseModel):
     name: str
     swagger_url: str
     base_url: str
-    auth_header: str = ""
+    auth_header: str = ""  # legacy: static "Bearer ..." or "Basic ..." string
+    auth: AuthConfig | None = None  # typed auth block (takes precedence over auth_header)
     is_read_only: bool = False
     extra_headers: dict[str, str] = Field(default_factory=dict)
     headers: str = ""  # "[key1:value1,key2:value2]" format; parsed into extra_headers
@@ -87,6 +154,9 @@ class SwaggerSource(BaseModel):
                 if ":" in pair:
                     k, _, v = pair.partition(":")
                     self.extra_headers[k.strip()] = v.strip()
+        # Compat: promote legacy auth_header string to StaticAuthConfig
+        if self.auth_header and self.auth is None:
+            self.auth = StaticAuthConfig(value=self.auth_header)
         return self
 
 
