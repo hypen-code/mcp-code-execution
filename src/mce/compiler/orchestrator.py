@@ -21,6 +21,7 @@ from mce.compiler.swagger_parser import SwaggerParser
 from mce.compiler.top_level_codegen import TopLevelFunctionGenerator
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
+from mce.security.vault import resolve_auth_env_vars
 from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -436,8 +437,8 @@ class Orchestrator:
         for src in sources:
             env_prefix = src.name.upper()
             env[f"MCE_{env_prefix}_BASE_URL"] = src.base_url
-            if src.auth_header:
-                env[f"MCE_{env_prefix}_AUTH"] = src.auth_header
+            if src.auth is not None:
+                env.update(resolve_auth_env_vars(src.name, src.auth))
             if src.extra_headers:
                 env[f"MCE_{env_prefix}_EXTRA_HEADERS"] = json.dumps(src.extra_headers)
 

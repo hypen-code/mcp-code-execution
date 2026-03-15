@@ -257,7 +257,7 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_MAX_CODE_SIZE_BYTES` | `65536` | Maximum allowed code size (64 KB) |
 | `MCE_ALLOWED_DOMAINS` | — | Comma-separated API domain allowlist (empty = allow all) |
 | `MCE_{SERVER}_BASE_URL` | — | API base URL per server |
-| `MCE_{SERVER}_AUTH` | — | Auth header per server (e.g. `Authorization: Bearer <token>`) |
+| `MCE_{SERVER}_AUTH` | — | Auth header per server — set automatically from `auth:` config; or set directly (e.g. `Bearer <token>`) for servers without a typed auth block |
 | `MCE_{SERVER}_EXTRA_HEADERS` | — | JSON object of custom HTTP headers per server (e.g. `{"X-Version":"v1"}`) |
 
 ### Sandbox Execution Mode
@@ -316,6 +316,112 @@ A brand-new container is created for every `execute_code` call, started, waited 
 
 For most deployments the default warm mode is the right choice. Switch to cold if you need the strongest possible per-request isolation or if memory is constrained.
 
+### Authentication
+
+MCE supports six auth types, configured per-server in `config/swaggers.yaml`. Tokens for dynamic types (OAuth2, Keycloak, Session) are **fetched automatically** and cached with TTL — no manual rotation required.
+
+| Type | Header set | Use when |
+|---|---|---|
+| `static` | `Authorization` | API key or pre-built `Bearer`/`Basic` header |
+| `jwt` | `Authorization` | You have a raw JWT string (auto-wrapped as `Bearer <token>`) |
+| `oauth2` | `Authorization` | Any OAuth2 server with a standard `/token` endpoint (client credentials) |
+| `keycloak` | `Authorization` | Keycloak OIDC — token URL built from `base_url` + `realm` |
+| `session` | `Cookie` (or `Authorization`) | Apps that use HTTP cookie sessions (JSESSIONID, PHPSESSID, etc.) |
+| _(none)_ | — | Public API — no auth header injected |
+
+```yaml
+servers:
+  # Static API key or Basic auth (legacy format, still works)
+  - name: grafana
+    swagger_url: "https://grafana.local/openapi.json"
+    base_url: "https://grafana.local/api"
+    auth_header: "Bearer ${GRAFANA_TOKEN}"   # resolved from env at runtime
+
+  # Explicit static header (typed form)
+  - name: my_api
+    swagger_url: "./swagger.yaml"
+    base_url: "https://api.example.com"
+    auth:
+      type: static
+      value: "Bearer ${MY_API_TOKEN}"
+
+  # Raw JWT — MCE prepends "Bearer " automatically
+  - name: ivf_api
+    swagger_url: "./ivf-api.yaml"
+    base_url: "https://ivf.example.com/api"
+    auth:
+      type: jwt
+      token: "${IVF_JWT_TOKEN}"
+
+  # Generic OAuth2 client credentials
+  - name: salesforce
+    swagger_url: "./salesforce.yaml"
+    base_url: "https://instance.salesforce.com/services/data/v58.0"
+    auth:
+      type: oauth2
+      token_url: "https://login.salesforce.com/services/oauth2/token"
+      client_id: "3MVG9..."
+      client_secret: "${SALESFORCE_CLIENT_SECRET}"
+      scope: "api"              # optional
+
+  # Keycloak OIDC — token URL is auto-built as:
+  # {base_url}/realms/{realm}/protocol/openid-connect/token
+  - name: hospital_api
+    swagger_url: "./hospital-api.yaml"
+    base_url: "https://hospital.example.com/api"
+    auth:
+      type: keycloak
+      base_url: "https://keycloak.example.com/auth"
+      realm: "myrealm"
+      client_id: "mce-client"
+      client_secret: "${KEYCLOAK_CLIENT_SECRET}"
+      scope: "openid"           # optional
+
+  # Session-cookie auth — POSTs credentials and caches the session cookie
+  # Variant A: collect all cookies (e.g. Java/Spring JSESSIONID)
+  - name: spring_app
+    swagger_url: "./spring-api.yaml"
+    base_url: "https://spring.example.com/api"
+    auth:
+      type: session
+      login_url: "https://spring.example.com/login"
+      username: "${SPRING_USER}"
+      password: "${SPRING_PASS}"
+      # cookie_name: "JSESSIONID"   # optional: extract only this cookie; default = all cookies
+      # content_type: form          # optional: "json" (default) or "form" for the login POST
+      # expires_seconds: 3600       # optional: session TTL for caching (default 3600)
+
+  # Session auth — Variant B: login endpoint returns a token in the JSON body
+  - name: custom_api
+    swagger_url: "./custom-api.yaml"
+    base_url: "https://custom.example.com/api"
+    auth:
+      type: session
+      login_url: "https://custom.example.com/api/auth/login"
+      username: "${CUSTOM_USER}"
+      password: "${CUSTOM_PASS}"
+      token_field: "access_token"   # sets Authorization: Bearer <value> instead of Cookie
+```
+
+#### Session auth — how it works
+
+```
+mce serve startup (or execute_code call)
+  └── vault.py: POST login_url with {username, password}
+        └── Variant A (cookie): response Set-Cookie header → MCE_{SERVER}_COOKIE
+        └── Variant B (token_field): response JSON body   → MCE_{SERVER}_AUTH
+
+Docker container env injection
+  └── MCE_{SERVER}_COOKIE=JSESSIONID=abc123     → Cookie: JSESSIONID=abc123
+  └── MCE_{SERVER}_AUTH=Bearer jwt-token-here   → Authorization: Bearer jwt-token-here
+```
+
+All `password`, `client_secret`, and `token` values support `${VAR}` references resolved from the host environment. Dynamic tokens are cached with a 30-second safety margin:
+- **OAuth2/Keycloak**: cached for `expires_in` seconds returned by the token endpoint
+- **Session**: cached for `expires_seconds` (configurable, default 3600 s)
+
+The login or token endpoint is only called when the cache is empty or expired.
+
 ### Swagger Config (`config/swaggers.yaml`)
 
 ```yaml
@@ -323,23 +429,23 @@ servers:
   - name: weather
     swagger_url: "https://api.weather.example.com/v1/openapi.json"
     base_url: "https://api.weather.example.com/v1"
-    auth_header: "${WEATHER_API_KEY}"   # Resolved from env
-    is_read_only: true                  # Omit POST/PUT/PATCH/DELETE at compile time
-    skills_url: "./docs/weather_skills.md"  # Optional: server skills guide (see below)
-    extra_headers:                      # Optional: custom headers injected on every request
+    auth_header: "Bearer ${WEATHER_API_KEY}"  # or use typed auth: block above
+    is_read_only: true                         # Omit POST/PUT/PATCH/DELETE at compile time
+    skills_url: "./docs/weather_skills.md"     # Optional: server skills guide (see below)
+    extra_headers:                             # Optional: custom headers injected on every request
       X-API-Version: "v1"
       X-Custom-Header: "value"
 
   - name: hotel_booking
-    swagger_url: "./swaggers/hotel.yaml"   # Local file paths are supported
+    swagger_url: "./swaggers/hotel.yaml"       # Local file paths are supported
     base_url: "https://api.hotel.example.com/v2"
     auth_header: "Bearer ${HOTEL_API_TOKEN}"
     is_read_only: false
-    top_level_functions:                   # Optional: expose selected functions as direct MCP tools
+    top_level_functions:                       # Optional: expose selected functions as direct MCP tools
       - getAvailableRooms
 ```
 
-> If `auth_header` is omitted, the server is treated as a public API — no auth header is injected.
+> If `auth_header` and `auth` are both omitted, the server is treated as a public API — no `Authorization` header is injected.
 
 > `extra_headers` are serialized to `MCE_{SERVER}_EXTRA_HEADERS` (JSON string) at compile time and injected into every generated function call.
 
@@ -549,9 +655,15 @@ When `MCE_LLM_ENHANCE=true`, the compiler sends the generated `functions.py` sou
 
 - Store secrets in `.env` or your system's environment — never in `config/swaggers.yaml` as literal values. Use `${VAR_NAME}` references instead:
   ```yaml
-  auth_header: "Bearer ${MY_API_TOKEN}"   # safe — resolved at runtime
-  # auth_header: "Bearer sk-actual-secret" # unsafe — literal value
+  auth_header: "Bearer ${MY_API_TOKEN}"      # safe — resolved at runtime
+  # auth_header: "Bearer sk-actual-secret"   # unsafe — literal value
+
+  auth:
+    type: keycloak
+    client_secret: "${KEYCLOAK_SECRET}"      # safe — resolved from env
+    # client_secret: "my-actual-secret"      # unsafe — literal value
   ```
+- For OAuth2/Keycloak servers, the token is fetched and cached host-side in vault.py — the LLM-generated sandbox code never sees the `client_secret` or the fetched access token directly.
 - Never pass credentials as arguments to `execute_code`. The LLM-generated code should only call the pre-built functions (e.g. `get_current_weather(city="London")`), which handle auth internally.
 - The generated `functions.py` files in `compiled/` contain only env var name references, not values — they are safe to inspect or commit.
 
