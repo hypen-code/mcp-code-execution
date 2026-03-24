@@ -43,9 +43,10 @@ from mce.utils.hashing import combine_hashes
 from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Mapping
 
     from mce.config import MCEConfig
+    from mce.models import AuthConfig
     from mce.runtime.cache import CacheStore
 
 logger = get_logger(__name__)
@@ -154,15 +155,19 @@ class CodeExecutor:
     :meth:`shutdown` when the server is stopping to clean up Docker resources.
     """
 
-    def __init__(self, config: MCEConfig, cache: CacheStore) -> None:
+    def __init__(
+        self, config: MCEConfig, cache: CacheStore, auth_configs: Mapping[str, AuthConfig | None] | None = None
+    ) -> None:
         """Initialise the executor (does not connect to Docker yet).
 
         Args:
             config: MCE configuration.
             cache: Cache store for persisting successful executions.
+            auth_configs: Optional mapping of server module name to AuthConfig for dynamic token fetching.
         """
         self._config = config
         self._cache = cache
+        self._auth_configs: Mapping[str, AuthConfig | None] = auth_configs or {}
         self._ast_guard = ASTGuard()
         self._compiled_dir = Path(config.compiled_output_dir)
         self._docker: aiodocker.Docker | None = None
@@ -466,7 +471,7 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         """
         assert self._warm_pool is not None
 
-        env_vars = build_all_server_env_vars(servers_used)
+        env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
 
@@ -527,7 +532,7 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         """
         assert self._docker is not None
 
-        env_vars = build_all_server_env_vars(servers_used)
+        env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
 

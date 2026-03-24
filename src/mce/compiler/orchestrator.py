@@ -21,7 +21,6 @@ from mce.compiler.swagger_parser import SwaggerParser
 from mce.compiler.top_level_codegen import TopLevelFunctionGenerator
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
-from mce.security.vault import resolve_auth_env_vars
 from mce.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -406,6 +405,58 @@ class Orchestrator:
         # Fallback: same bin directory as the running Python interpreter
         return str(Path(sys.executable).parent / "mce")
 
+    @staticmethod
+    def _auth_env_hints(server_name: str, auth: Any) -> dict[str, str]:
+        """Build MCP JSON env hints for an auth config — keeps ``${VAR}`` refs as-is.
+
+        Unlike ``resolve_auth_env_vars`` this never fetches tokens or resolves
+        secrets.  For static/JWT auth the raw value (with any ``${VAR}``
+        placeholders intact) is emitted under ``MCE_{SERVER}_AUTH``.  For
+        OAuth2/Keycloak/session auth only the secret/credential env var
+        references are emitted so the user knows which variables to set.
+
+        Args:
+            server_name: Server name used for the ``MCE_{SERVER}_`` prefix.
+            auth: Typed AuthConfig instance.
+
+        Returns:
+            Dict of env var name → placeholder value suitable for MCP JSON.
+        """
+        from mce.models import (  # noqa: PLC0415
+            JwtAuthConfig,
+            KeycloakAuthConfig,
+            OAuth2AuthConfig,
+            SessionAuthConfig,
+            StaticAuthConfig,
+        )
+
+        prefix = f"MCE_{server_name.upper()}_"
+        _ref_re = re.compile(r"\$\{([^}]+)\}")
+
+        if isinstance(auth, StaticAuthConfig):
+            return {f"{prefix}AUTH": auth.value}
+
+        if isinstance(auth, JwtAuthConfig):
+            return {f"{prefix}AUTH": f"Bearer {auth.token}"}
+
+        if isinstance(auth, (OAuth2AuthConfig, KeycloakAuthConfig)):
+            match = _ref_re.search(auth.client_secret)
+            if match:
+                var_name = match.group(1)
+                return {var_name: f"${{{var_name}}}"}
+            return {}  # literal secret — don't embed in MCP JSON
+
+        if isinstance(auth, SessionAuthConfig):
+            hints: dict[str, str] = {}
+            for field_val in (auth.username, auth.password):
+                match = _ref_re.search(field_val)
+                if match:
+                    var_name = match.group(1)
+                    hints[var_name] = f"${{{var_name}}}"
+            return hints
+
+        return {}
+
     def _generate_mcp_json(self, sources: list[SwaggerSource]) -> str | None:
         """Generate an MCP JSON config snippet for the latest compiled server.
 
@@ -438,7 +489,7 @@ class Orchestrator:
             env_prefix = src.name.upper()
             env[f"MCE_{env_prefix}_BASE_URL"] = src.base_url
             if src.auth is not None:
-                env.update(resolve_auth_env_vars(src.name, src.auth))
+                env.update(self._auth_env_hints(src.name, src.auth))
             if src.extra_headers:
                 env[f"MCE_{env_prefix}_EXTRA_HEADERS"] = json.dumps(src.extra_headers)
 

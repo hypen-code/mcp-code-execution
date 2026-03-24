@@ -174,6 +174,7 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
+    from mce.compiler.orchestrator import Orchestrator, _to_module_name  # noqa: PLC0415
     from mce.runtime.cache import CacheStore  # noqa: PLC0415
     from mce.runtime.executor import CodeExecutor  # noqa: PLC0415
     from mce.runtime.registry import Registry  # noqa: PLC0415
@@ -196,6 +197,12 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     registry = Registry(config.compiled_output_dir)
     registry.load()
 
+    # Load auth configs from swaggers.yaml so dynamic token fetching (Keycloak, OAuth2, etc.)
+    # is available at runtime without requiring MCE_{SERVER}_AUTH env vars.
+    orchestrator = Orchestrator(config)
+    sources = orchestrator.load_swagger_sources()
+    auth_configs = {_to_module_name(s.name): s.auth for s in sources if s.auth is not None}
+
     servers = registry.list_servers()
     logger.info(
         "mce_starting",
@@ -211,7 +218,7 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     # startup() is inside the try so shutdown() always runs — even if startup
     # fails mid-way (e.g. first container created, second raises), ensuring
     # no warm containers are left orphaned in Docker.
-    executor = CodeExecutor(config, cache)
+    executor = CodeExecutor(config, cache, auth_configs)
     try:
         await executor.startup()
         mcp = create_server(config, registry=registry, cache=cache, executor=executor)

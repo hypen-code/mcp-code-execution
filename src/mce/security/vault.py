@@ -156,6 +156,7 @@ def _fetch_oauth2_token(server_name: str, auth: AuthConfig) -> tuple[str, float]
     client: OAuth2Client = OAuth2Client(
         client_id=auth.client_id,  # type: ignore[union-attr]
         client_secret=client_secret,
+        verify=False,
     )
     try:
         token = client.fetch_token(
