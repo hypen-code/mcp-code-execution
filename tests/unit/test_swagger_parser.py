@@ -180,3 +180,94 @@ def test_sanitize_identifier_abbreviations() -> None:
     parser = SwaggerParser(source)
 
     assert parser._sanitize_identifier("getHTTPStatus") == "get_http_status"
+
+
+async def test_declared_path_param_parsed(petstore_source: SwaggerSource) -> None:
+    """Path parameter declared in swagger parameters array is parsed correctly."""
+    parser = SwaggerParser(petstore_source)
+    spec = await parser.parse()
+
+    ep = next(ep for ep in spec.endpoints if ep.operation_id == "get_pet_by_id")
+    path_params = [p for p in ep.parameters if p.location == "path"]
+
+    assert len(path_params) == 1
+    assert path_params[0].name == "petId"
+    assert path_params[0].required is True
+    assert path_params[0].param_type == "integer"
+
+
+async def test_undeclared_path_param_auto_detected() -> None:
+    """Path param in URL template but missing from parameters array is auto-added."""
+    import tempfile  # noqa: PLC0415
+
+    yaml_content = """
+openapi: "3.0.3"
+info:
+  title: Test API
+  version: "1.0.0"
+paths:
+  /services/{serviceName}/agent:
+    get:
+      operationId: get_service_agent
+      summary: Get agent for a service
+      responses:
+        "200":
+          description: OK
+"""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        f.write(yaml_content)
+        path = f.name
+
+    source = SwaggerSource(name="test", swagger_url=path, base_url="https://example.com")
+    parser = SwaggerParser(source)
+    spec = await parser.parse()
+
+    ep = next(ep for ep in spec.endpoints if ep.operation_id == "get_service_agent")
+    path_params = [p for p in ep.parameters if p.location == "path"]
+
+    assert len(path_params) == 1
+    assert path_params[0].name == "serviceName"
+    assert path_params[0].required is True
+    assert path_params[0].param_type == "string"
+
+
+async def test_undeclared_path_param_appears_in_generated_code() -> None:
+    """Auto-detected path param appears in function signature and f-string URL."""
+    import ast  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    from mce.compiler.codegen import CodeGenerator  # noqa: PLC0415
+
+    yaml_content = """
+openapi: "3.0.3"
+info:
+  title: Test API
+  version: "1.0.0"
+paths:
+  /internal/apm/services/{serviceName}/agent:
+    get:
+      operationId: get_service_agent
+      summary: Get APM agent for a service
+      responses:
+        "200":
+          description: OK
+"""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        f.write(yaml_content)
+        path = f.name
+
+    source = SwaggerSource(name="apm", swagger_url=path, base_url="https://example.com")
+    parser = SwaggerParser(source)
+    spec = await parser.parse()
+
+    gen = CodeGenerator()
+    code = gen.generate(spec)
+
+    # Valid Python
+    ast.parse(code)
+
+    # Param in function signature
+    assert "service_name: str" in code
+
+    # f-string with substituted param in URL
+    assert 'f"/internal/apm/services/{service_name}/agent"' in code

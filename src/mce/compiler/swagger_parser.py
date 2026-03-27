@@ -229,6 +229,13 @@ class SwaggerParser:
         all_params = list(path_level_params) + list(operation.get("parameters", []))
         parameters = self._parse_parameters(all_params)
 
+        # Auto-detect path params from URL template not explicitly declared in spec
+        declared_path_names = {p.name for p in parameters if p.location == "path"}
+        for match in re.finditer(r"\{([^}]+)\}", path):
+            param_name = match.group(1)
+            if param_name not in declared_path_names:
+                parameters.append(ParamSchema(name=param_name, location="path", param_type="string", required=True))
+
         request_body_schema: dict[str, Any] | None = None
         if method in ("POST", "PUT", "PATCH"):
             request_body_schema = self._parse_request_body(operation.get("requestBody", {}))
