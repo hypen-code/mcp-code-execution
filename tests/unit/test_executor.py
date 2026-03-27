@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from typing import TYPE_CHECKING
@@ -47,6 +48,7 @@ def _make_docker_mock() -> MagicMock:
     """Return a MagicMock that mimics an aiodocker.Docker client."""
     docker = MagicMock()
     docker.close = AsyncMock()
+    docker.version = AsyncMock(return_value={"Version": "24.0.0"})
     return docker
 
 
@@ -562,6 +564,161 @@ async def test_execute_cold_cache_disabled_no_store(tmp_path: Path) -> None:
 
     cache.store.assert_not_awaited()
     assert result.cache_id is None
+
+
+# ---------------------------------------------------------------------------
+# _compute_swagger_hash
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# _WarmPool.drain
+# ---------------------------------------------------------------------------
+
+
+async def test_warm_pool_drain_returns_all_containers() -> None:
+    pool = _WarmPool()
+    c1, c2 = AsyncMock(), AsyncMock()
+    await pool.push(c1)
+    await pool.push(c2)
+    containers = await pool.drain()
+    assert len(containers) == 2
+    assert pool._queue.empty()
+
+
+async def test_warm_pool_drain_empty_pool() -> None:
+    pool = _WarmPool()
+    assert await pool.drain() == []
+
+
+# ---------------------------------------------------------------------------
+# shutdown — CancelledError handling
+# ---------------------------------------------------------------------------
+
+
+async def test_shutdown_reraises_cancelled_error_after_cleanup(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    mock_container = AsyncMock()
+    mock_container.id = "abc123def456"
+    mock_container.delete = AsyncMock(side_effect=asyncio.CancelledError())
+
+    executor._warm_containers = [mock_container]
+    executor._docker = _make_docker_mock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await executor.shutdown()
+
+    # Containers list is still cleared despite the error
+    assert executor._warm_containers == []
+
+
+# ---------------------------------------------------------------------------
+# execute() — warm mode path
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_warm_happy_path(tmp_path: Path) -> None:
+    import json as _json  # noqa: PLC0415
+
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    cache = _make_mock_cache()
+    executor = CodeExecutor(config, cache)
+
+    payload = _json.dumps({"success": True, "data": {"value": 7}})
+    stream = _make_exec_stream_mock(payload.encode())
+    exec_obj = AsyncMock()
+    exec_obj.start = MagicMock(return_value=stream)
+
+    mock_container = AsyncMock()
+    mock_container.id = "warmexecid123"
+    mock_container.exec = AsyncMock(return_value=exec_obj)
+
+    warm_pool = _WarmPool()
+    await warm_pool.push(mock_container)
+    executor._warm_pool = warm_pool
+    executor._docker = _make_docker_mock()
+
+    result = await executor.execute("result = 7", "compute 7")
+    assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# _run_cold — container delete failure is swallowed
+# ---------------------------------------------------------------------------
+
+
+async def test_run_cold_container_delete_failure_is_swallowed(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="cold")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    payload = json.dumps({"success": True, "data": None})
+    mock_container = _make_cold_container_mock(payload)
+    mock_container.delete = AsyncMock(side_effect=Exception("delete failed"))
+
+    mock_docker = _make_docker_mock()
+    mock_docker.containers = AsyncMock()
+    mock_docker.containers.create = AsyncMock(return_value=mock_container)
+    executor._docker = mock_docker
+
+    # Should not raise despite delete failure
+    output = await executor._run_cold("result = None", [])
+    assert output
+
+
+# ---------------------------------------------------------------------------
+# _run_warm — Docker exec create failure
+# ---------------------------------------------------------------------------
+
+
+async def test_run_warm_exec_create_docker_error_raises(tmp_path: Path) -> None:
+    import aiodocker.exceptions  # noqa: PLC0415
+
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    mock_container = AsyncMock()
+    mock_container.id = "warmcontainerid"
+    mock_container.exec = AsyncMock(side_effect=aiodocker.exceptions.DockerError(status=500, message="exec failed"))
+
+    warm_pool = _WarmPool()
+    await warm_pool.push(mock_container)
+    executor._warm_pool = warm_pool
+    executor._docker = _make_docker_mock()
+
+    with pytest.raises(ExecutionError, match="docker exec create failed"):
+        await executor._run_warm("result = 1", [])
+
+
+# ---------------------------------------------------------------------------
+# _run_warm — stream timeout
+# ---------------------------------------------------------------------------
+
+
+async def test_run_warm_stream_timeout_raises(tmp_path: Path) -> None:
+    config = _make_config(tmp_path, sandbox_mode="warm")
+    executor = CodeExecutor(config, _make_mock_cache())
+
+    stream = AsyncMock()
+    stream.read_out = AsyncMock(side_effect=TimeoutError())
+    stream.__aenter__ = AsyncMock(return_value=stream)
+    stream.__aexit__ = AsyncMock(return_value=None)
+
+    exec_obj = AsyncMock()
+    exec_obj.start = MagicMock(return_value=stream)
+
+    mock_container = AsyncMock()
+    mock_container.id = "warmtimeoutid"
+    mock_container.exec = AsyncMock(return_value=exec_obj)
+
+    warm_pool = _WarmPool()
+    await warm_pool.push(mock_container)
+    executor._warm_pool = warm_pool
+    executor._docker = _make_docker_mock()
+
+    with pytest.raises(ExecutionTimeoutError):
+        await executor._run_warm("import time; time.sleep(999)", [])
 
 
 # ---------------------------------------------------------------------------

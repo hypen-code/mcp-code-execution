@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
+import aiosqlite
 import pytest
 
+from mce.errors import CacheError
 from mce.runtime.cache import CacheStore
 
 if TYPE_CHECKING:
@@ -142,3 +145,62 @@ async def test_invalidate_by_swagger_hash(cache: CacheStore) -> None:
 
     results = await cache.search()
     assert all(e.description != "uses old api" for e in results)
+
+
+# ---------------------------------------------------------------------------
+# Error handling — aiosqlite.Error branches
+# ---------------------------------------------------------------------------
+
+
+async def test_initialize_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to initialize"),
+    ):
+        await store.initialize()
+
+
+async def test_store_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to store"),
+    ):
+        await store.store("result = 1", "desc", [], "hash1")
+
+
+async def test_get_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to retrieve"),
+    ):
+        await store.get("some_id")
+
+
+async def test_search_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to search"),
+    ):
+        await store.search("query")
+
+
+async def test_invalidate_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to invalidate"),
+    ):
+        await store.invalidate_by_swagger_hash("old_hash")
+
+
+async def test_cleanup_expired_raises_cache_error_on_db_failure(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "bad.db"), ttl_seconds=3600)
+    with (
+        patch("aiosqlite.connect", side_effect=aiosqlite.Error("boom")),
+        pytest.raises(CacheError, match="Failed to clean"),
+    ):
+        await store.cleanup_expired()
