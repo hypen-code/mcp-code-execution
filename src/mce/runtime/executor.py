@@ -2,16 +2,17 @@
 
 Execution modes (configured via MCE_SANDBOX_MODE):
 
-  warm (default)
+  cold (default)
+    A brand-new container is created for every request, started, waited on,
+    then deleted.  Full isolation between requests at the cost of cold-start
+    latency (~100–400 ms per call).
+
+  warm
     A pool of MCE_WARM_POOL_SIZE persistent containers is created at startup.
     Each request borrows a container from the pool, uses ``docker exec`` to run
     the entrypoint inside it, then returns the container for the next request.
     Container cold-start overhead is paid once at startup, not per request.
-
-  cold
-    A brand-new container is created for every request, started, waited on,
-    then deleted.  Full isolation between requests at the cost of cold-start
-    latency (~100–400 ms per call).
+    Enable by setting MCE_SANDBOX_MODE=warm and MCE_WARM_POOL_SIZE=<n>.
 
 Both modes communicate with Docker exclusively through ``aiodocker`` — a fully
 async client that never blocks the asyncio event loop.  Code is delivered to
@@ -188,6 +189,19 @@ class CodeExecutor:
         """
         docker_url = self._config.docker_host or None
         self._docker = aiodocker.Docker(url=docker_url)
+
+        # Verify Docker daemon is reachable before proceeding
+        try:
+            await self._docker.version()
+        except Exception as exc:
+            await self._docker.close()
+            self._docker = None
+            socket_hint = self._config.docker_host or "unix:///var/run/docker.sock"
+            raise ExecutionError(
+                f"Cannot connect to Docker daemon ({socket_hint}). "
+                "Is Docker running? "
+                "Start Docker and retry, or set MCE_DOCKER_HOST to the correct socket path."
+            ) from exc
 
         if self._config.sandbox_mode == "warm":
             self._warm_pool = _WarmPool()
