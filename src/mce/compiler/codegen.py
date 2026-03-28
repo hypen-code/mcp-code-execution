@@ -349,16 +349,33 @@ class CodeGenerator:
         """
         template = self._env.get_template("function.py.j2")
 
-        functions_data = [self._prepare_function_data(ep) for ep in spec.endpoints]
+        functions_data = [self._prepare_function_data(ep, spec.server_url_vars) for ep in spec.endpoints]
+
+        # Sanitize the server name for use in env var names: "cse-api" → "CSE_API".
+        # This must match what _detect_servers_used + vault.py produce at runtime
+        # (both use the module directory name which replaces non-alnum chars with "_").
+        server_env_prefix = re.sub(r"[^a-zA-Z0-9]", "_", spec.name).upper()
+
+        # Build ordered list of extra server URL env vars for the template
+        extra_server_vars = [
+            {
+                "var_name": var_name,
+                "env_var": f"MCE_{server_env_prefix}_{var_name.lstrip('_')}",
+                "default_url": url,
+            }
+            for url, var_name in spec.server_url_vars.items()
+        ]
 
         header_desc_width = max(40, 120 - len(f"# Server: {spec.name} \u2014 "))
         try:
             code: str = template.render(
                 server_name=spec.name,
+                server_env_prefix=server_env_prefix,
                 description=spec.description,
                 base_url=spec.base_url,
                 is_read_only=spec.is_read_only,
                 functions=functions_data,
+                extra_server_vars=extra_server_vars,
                 header_desc_width=header_desc_width,
             )
         except Exception as exc:
@@ -372,15 +389,22 @@ class CodeGenerator:
         )
         return code
 
-    def _prepare_function_data(self, endpoint: EndpointSpec) -> dict[str, Any]:
+    def _prepare_function_data(self, endpoint: EndpointSpec, url_to_var: dict[str, str]) -> dict[str, Any]:
         """Prepare template context data for a single endpoint.
 
         Args:
             endpoint: Endpoint specification.
+            url_to_var: Mapping of extra server URL → module variable name from the ServerSpec.
 
         Returns:
             Dict with all template variables for the function.
         """
+        # Prefer a module-level env-var-backed variable over a hardcoded URL string.
+        # base_url_var: e.g. "_BASE_URL_1" — used in the template as a bare identifier.
+        # base_url:     raw URL fallback for URLs not in the map (should not happen in practice).
+        ep_url = endpoint.base_url
+        base_url_var = url_to_var.get(ep_url, "") if ep_url else ""
+
         return {
             "name": endpoint.operation_id,
             "method": endpoint.method,
@@ -395,7 +419,8 @@ class CodeGenerator:
             "docstring_args": _build_docstring_args(endpoint),
             "response_fields": [r.name for r in endpoint.response_schema],
             "has_query_params": any(p.location == "query" for p in endpoint.parameters),
-            "base_url": endpoint.base_url,
+            "base_url_var": base_url_var,  # module var name  (preferred)
+            "base_url": ep_url if not base_url_var else "",  # raw URL fallback only
             "return_type": _build_return_type(endpoint),
             "typeddict_classes": _build_typeddict_classes(endpoint),
         }
