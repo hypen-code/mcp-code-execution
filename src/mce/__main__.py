@@ -31,7 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # clean subcommand
-    clean_parser = subparsers.add_parser("clean", help="Remove the compiled output directory")
+    clean_parser = subparsers.add_parser("clean", help="Remove the compiled output directory and cache database")
     clean_parser.add_argument(
         "then",
         nargs="?",
@@ -96,7 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _cmd_clean(args: argparse.Namespace) -> int:
-    """Remove the compiled output directory.
+    """Remove the compiled output directory and the cache database.
 
     Args:
         args: Parsed CLI arguments (may include ``then="compile"``).
@@ -105,15 +105,25 @@ async def _cmd_clean(args: argparse.Namespace) -> int:
         Exit code (0 = success).
     """
     import shutil  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
 
     config = load_config(getattr(args, "env_file", None))
-    compiled_dir = config.compiled_output_dir
 
-    if compiled_dir and __import__("pathlib").Path(compiled_dir).exists():
+    # Remove compiled output directory
+    compiled_dir = Path(config.compiled_output_dir)
+    if compiled_dir.exists():
         shutil.rmtree(compiled_dir)
         print(f"🗑  Removed: {compiled_dir}")
     else:
         print(f"⏭  Nothing to clean: {compiled_dir!r} does not exist")
+
+    # Remove cache database
+    cache_db = Path(config.cache_db_path)
+    if cache_db.exists():
+        cache_db.unlink()
+        print(f"🗑  Removed: {cache_db}")
+    else:
+        print(f"⏭  Nothing to clean: {cache_db!r} does not exist")
 
     if getattr(args, "then", None) == "compile":
         return await _cmd_compile(args)

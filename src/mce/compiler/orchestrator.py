@@ -161,9 +161,13 @@ class Orchestrator:
         server_dir = self._output_dir / module_name
         manifest_path = server_dir / "manifest.json"
 
-        # Parse the swagger document
+        # Parse the swagger document (resolves base_url from spec if not set in swaggers.yaml)
         parser = SwaggerParser(source)
         spec = await parser.parse()
+
+        # Propagate resolved base_url back so _generate_mcp_json uses the right value
+        if not source.base_url and spec.base_url:
+            source.base_url = spec.base_url
 
         if dry_run:
             logger.info("dry_run_parsed", server=source.name, endpoints=len(spec.endpoints))

@@ -55,6 +55,7 @@ class SwaggerParser:
 
         doc_hash = hash_content(raw_content)
         description = self._extract_description()
+        base_url = self._resolve_base_url()
         endpoints = self._parse_paths()
 
         logger.info(
@@ -67,7 +68,7 @@ class SwaggerParser:
         return ServerSpec(
             name=self._source.name,
             description=description,
-            base_url=self._source.base_url,
+            base_url=base_url,
             is_read_only=self._source.is_read_only,
             endpoints=endpoints,
             swagger_hash=doc_hash,
@@ -146,6 +147,65 @@ class SwaggerParser:
             return doc
         except yaml.YAMLError as exc:
             raise CompileError(f"Failed to parse swagger YAML/JSON for {self._source.name}: {exc}") from exc
+
+    def _resolve_base_url(self) -> str:
+        """Resolve the effective base URL for this server.
+
+        Priority:
+        1. ``base_url`` set in swaggers.yaml — always wins.
+        2. ``servers[0].url`` from the OpenAPI/Swagger document.
+
+        Returns:
+            Resolved base URL string (trailing slash stripped).
+
+        Raises:
+            CompileError: When the base URL cannot be determined from either source,
+                or when the spec's ``servers[].url`` is present but empty/invalid.
+        """
+        # Priority 1: explicitly configured in swaggers.yaml
+        if self._source.base_url:
+            return self._source.base_url.rstrip("/")
+
+        # Priority 2: fall back to the spec's servers[] block
+        doc_servers: list[Any] = self._raw_doc.get("servers", [])
+        if not doc_servers:
+            raise CompileError(
+                f"No base URL found for server '{self._source.name}'. "
+                f"Add 'base_url' to its entry in swaggers.yaml, "
+                f"or add a 'servers' block with a valid URL to the OpenAPI spec."
+            )
+
+        first_server = doc_servers[0]
+        if not isinstance(first_server, dict):
+            raise CompileError(
+                f"Invalid 'servers' entry in the OpenAPI spec for '{self._source.name}': "
+                f"expected a mapping but got {type(first_server).__name__}. "
+                f"Fix the spec or set 'base_url' explicitly in swaggers.yaml."
+            )
+
+        url = str(first_server.get("url", "")).strip()
+        if not url:
+            raise CompileError(
+                f"The 'servers[0].url' in the OpenAPI spec for '{self._source.name}' is empty. "
+                f"Set 'base_url' in swaggers.yaml or provide a valid absolute URL "
+                f"in the spec's 'servers' block."
+            )
+
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise CompileError(
+                f"The 'servers[0].url' in the OpenAPI spec for '{self._source.name}' "
+                f"is not a valid absolute URL: '{url}'. "
+                f"Set 'base_url' in swaggers.yaml or fix the 'servers' block in the spec "
+                f"to use a full URL (e.g. 'https://api.example.com/v1')."
+            )
+
+        logger.info(
+            "base_url_resolved_from_spec",
+            server=self._source.name,
+            base_url=url,
+        )
+        return url.rstrip("/")
 
     def _extract_description(self) -> str:
         """Extract server description from swagger info block.

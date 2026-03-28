@@ -135,7 +135,7 @@ class SwaggerSource(BaseModel):
 
     name: str
     swagger_url: str
-    base_url: str
+    base_url: str = ""  # Optional: falls back to servers[].url in the OpenAPI spec
     auth_header: str = ""  # legacy: static "Bearer ..." or "Basic ..." string
     auth: AuthConfig | None = None  # typed auth block (takes precedence over auth_header)
     is_read_only: bool = False
