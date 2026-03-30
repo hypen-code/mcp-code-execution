@@ -112,6 +112,9 @@ _ALLOWED_MODULES: frozenset[str] = frozenset(
         "uuid",
         "pydantic",
         "orjson",
+        "openpyxl",
+        "pandas",
+        "numpy",
         "__future__",
     }
 )
