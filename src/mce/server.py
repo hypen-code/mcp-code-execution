@@ -123,6 +123,7 @@ def _build_instructions(
     registry: Registry,
     servers_with_skills: list[str],
     top_level_tools: list[dict[str, Any]] | None = None,
+    additional_tools_enabled: bool = False,
 ) -> str:
     """Build the FastMCP instructions string.
 
@@ -137,6 +138,16 @@ def _build_instructions(
             a ``skills.md`` on disk.  Computed once in ``create_server`` so this
             function never calls ``registry.list_servers()`` itself.
     """
+    # Inject skills-tool steps into the workflow when additional tools are enabled.
+    base = _BASE_INSTRUCTIONS
+    if additional_tools_enabled:
+        base = base.replace(
+            "1. **`list_servers`** — Discover available API servers.",
+            "1. **`list_servers`** — Discover available API servers.\n\n"
+            "1a. **`list_skills`** — See which servers have a skills guide.\n"
+            "1b. **`get_server_skills`** — Read a server's skills guide before using it.",
+        )
+
     # Prepend a direct-tools section when top-level tools are registered so the
     # LLM knows it can call them immediately — no workflow required.
     direct_section = ""
@@ -157,7 +168,7 @@ def _build_instructions(
         direct_section = "".join(lines) + "\n"
 
     if not servers_with_skills:
-        return _BASE_INSTRUCTIONS + direct_section
+        return base + direct_section
 
     skills_blocks: list[str] = []
     for sn in servers_with_skills:
@@ -166,7 +177,7 @@ def _build_instructions(
             skills_blocks.append(f"### `{sn}`\n\n{path.read_text(encoding='utf-8')}")
 
     if not skills_blocks:
-        return _BASE_INSTRUCTIONS + direct_section
+        return base + direct_section
 
     divider = "\n\n---\n\n"
     skills_section = (
@@ -174,7 +185,7 @@ def _build_instructions(
         "The following server-specific guides are pre-loaded. "
         "Apply their guidance whenever you use that server's tools.\n\n" + divider.join(skills_blocks) + "\n"
     )
-    return _BASE_INSTRUCTIONS + direct_section + skills_section
+    return base + direct_section + skills_section
 
 
 def _apply_params_to_code(code: str, params: dict[str, Any]) -> str:
@@ -221,7 +232,7 @@ def create_server(
     cache: CacheStore | None = None,
     executor: CodeExecutor | None = None,
 ) -> FastMCP:
-    """Create and configure the MCE FastMCP server with all 4 tools and 1 prompt.
+    """Create and configure the MCE FastMCP server with all 6 tools and 1 prompt.
 
     Args:
         config: MCE configuration instance.
@@ -254,7 +265,9 @@ def create_server(
 
     mcp: FastMCP = FastMCP(
         name="MCE — MCP Code Execution",
-        instructions=_build_instructions(registry, servers_with_skills, top_level_tools),
+        instructions=_build_instructions(
+            registry, servers_with_skills, top_level_tools, config.enable_additional_tools
+        ),
     )
 
     if executor is None:
@@ -300,6 +313,48 @@ def create_server(
         except Exception as exc:  # noqa: BLE001
             logger.exception("list_servers_unexpected_error")
             return str(_toon_encode({"error": "Internal error loading servers", "detail": str(exc)}))
+
+    if config.enable_additional_tools:
+
+        @mcp.tool()
+        async def list_skills() -> str:
+            """List all servers that have a skills guide available.
+
+            Returns each server name and whether it has a skills guide configured
+            via skills_url in swaggers.yaml. Call get_server_skills to read the
+            full guide before using a particular server's functions.
+            """
+            try:
+                servers = registry.list_servers()
+                result = [{"server": s.name, "has_skills": registry.has_skills(s.name)} for s in servers]
+                logger.info("tool_list_skills_called", count=len(result))
+                return str(_toon_encode({"skills": result}))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("list_skills_unexpected_error")
+                return str(_toon_encode({"error": "Internal error", "detail": str(exc)}))
+
+        @mcp.tool()
+        async def get_server_skills(server_name: str) -> str:
+            """Fetch the skills guide for a server before using it.
+
+            Skills guides contain usage patterns, best practices, and worked
+            examples specific to that server's API. Call this before calling
+            get_functions or execute_code for a server you haven't used before.
+
+            Args:
+                server_name: Name of the server (from list_servers or list_skills).
+            """
+            if not registry.has_skills(server_name):
+                return str(
+                    _toon_encode({"error": f"No skills guide for server '{server_name}'", "error_type": "not_found"})
+                )
+            path = registry.skills_path(server_name)
+            if path is None:
+                return str(
+                    _toon_encode({"error": f"Skills file missing for '{server_name}'", "error_type": "not_found"})
+                )
+            logger.info("tool_get_server_skills_called", server=server_name)
+            return str(_toon_encode({"server": server_name, "skills": path.read_text(encoding="utf-8")}))
 
     @mcp.tool()
     async def get_functions(functions: list[dict[str, str]]) -> str:
