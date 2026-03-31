@@ -105,3 +105,208 @@ def test_safe_name_already_snake_case() -> None:
 
     assert _safe_name("city") == "city"
     assert _safe_name("start_time") == "start_time"
+
+
+# ---------------------------------------------------------------------------
+# _build_param_annotation — lines 76-79
+# ---------------------------------------------------------------------------
+
+
+def test_build_param_annotation_optional_returns_none_union() -> None:
+    from mce.compiler.codegen import _build_param_annotation  # noqa: PLC0415
+    from mce.models import ParamSchema  # noqa: PLC0415
+
+    p = ParamSchema(name="limit", location="query", param_type="integer", required=False)
+    assert _build_param_annotation(p) == "int | None"
+
+
+def test_build_param_annotation_required_no_none() -> None:
+    from mce.compiler.codegen import _build_param_annotation  # noqa: PLC0415
+    from mce.models import ParamSchema  # noqa: PLC0415
+
+    p = ParamSchema(name="city", location="query", param_type="string", required=True)
+    assert _build_param_annotation(p) == "str"
+
+
+# ---------------------------------------------------------------------------
+# _safe_name — digit prefix (line 174), keyword (line 176)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_name_digit_prefix_gets_p_prefix() -> None:
+    from mce.compiler.codegen import _safe_name  # noqa: PLC0415
+
+    assert _safe_name("123start") == "p_123start"
+
+
+def test_safe_name_keyword_gets_underscore_suffix() -> None:
+    from mce.compiler.codegen import _safe_name  # noqa: PLC0415
+
+    # "from" and "class" are Python keywords
+    assert _safe_name("from") == "from_"
+    assert _safe_name("class") == "class_"
+
+
+# ---------------------------------------------------------------------------
+# _safe_field_name — digit prefix (line 194), keyword (line 196)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_field_name_digit_prefix() -> None:
+    from mce.compiler.codegen import _safe_field_name  # noqa: PLC0415
+
+    assert _safe_field_name("123field") == "f_123field"
+
+
+def test_safe_field_name_keyword() -> None:
+    from mce.compiler.codegen import _safe_field_name  # noqa: PLC0415
+
+    assert _safe_field_name("class") == "class_"
+
+
+def test_safe_field_name_at_sign() -> None:
+    from mce.compiler.codegen import _safe_field_name  # noqa: PLC0415
+
+    assert _safe_field_name("@type") == "_type"
+
+
+# ---------------------------------------------------------------------------
+# _build_function_signature — array param default (line 104)
+# ---------------------------------------------------------------------------
+
+
+def test_build_function_signature_array_param_default_is_none() -> None:
+    from mce.compiler.codegen import _build_function_signature  # noqa: PLC0415
+    from mce.models import EndpointSpec, ParamSchema  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/items",
+        method="GET",
+        operation_id="list_items",
+        summary="List",
+        parameters=[ParamSchema(name="tags", location="query", param_type="array", required=False)],
+    )
+    sig = _build_function_signature(ep)
+    assert "tags" in sig
+    assert "None" in sig
+
+
+def test_build_function_signature_includes_json_body_for_post() -> None:
+    from mce.compiler.codegen import _build_function_signature  # noqa: PLC0415
+    from mce.models import EndpointSpec  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/items",
+        method="POST",
+        operation_id="create_item",
+        summary="Create",
+        parameters=[],
+        request_body_schema={"type": "object"},
+    )
+    sig = _build_function_signature(ep)
+    assert "json_body" in sig
+
+
+# ---------------------------------------------------------------------------
+# _build_typeddict_classes — nested object (lines 236, 241-246, 252-253)
+# ---------------------------------------------------------------------------
+
+
+def test_build_typeddict_classes_nested_object() -> None:
+    from mce.compiler.codegen import _build_typeddict_classes  # noqa: PLC0415
+    from mce.models import EndpointSpec, ResponseField  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/u",
+        method="GET",
+        operation_id="get_user",
+        summary="Get",
+        response_schema=[
+            ResponseField(
+                name="address",
+                field_type="object",
+                nested=[ResponseField(name="street", field_type="string")],
+            ),
+            ResponseField(name="name", field_type="string"),
+        ],
+    )
+    classes = _build_typeddict_classes(ep)
+    combined = "\n".join(classes)
+    # Should have a nested TypedDict and the main one
+    assert "GetUserResponseAddress" in combined
+    assert "GetUserResponse" in combined
+    assert "street" in combined
+
+
+def test_build_typeddict_classes_array_response() -> None:
+    from mce.compiler.codegen import _build_typeddict_classes  # noqa: PLC0415
+    from mce.models import EndpointSpec, ResponseField  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/items",
+        method="GET",
+        operation_id="list_items",
+        summary="List",
+        response_schema=[
+            ResponseField(
+                name="items",
+                field_type="array",
+                nested=[ResponseField(name="id", field_type="integer")],
+            )
+        ],
+    )
+    classes = _build_typeddict_classes(ep)
+    combined = "\n".join(classes)
+    assert "ListItemsResponseItem" in combined
+    assert "id" in combined
+
+
+def test_build_typeddict_classes_empty_schema_returns_empty() -> None:
+    from mce.compiler.codegen import _build_typeddict_classes  # noqa: PLC0415
+    from mce.models import EndpointSpec  # noqa: PLC0415
+
+    ep = EndpointSpec(path="/x", method="GET", operation_id="get_x", summary="X", response_schema=[])
+    assert _build_typeddict_classes(ep) == []
+
+
+# ---------------------------------------------------------------------------
+# _build_return_type — lines 279-287
+# ---------------------------------------------------------------------------
+
+
+def test_build_return_type_array_with_nested() -> None:
+    from mce.compiler.codegen import _build_return_type  # noqa: PLC0415
+    from mce.models import EndpointSpec, ResponseField  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/x",
+        method="GET",
+        operation_id="list_things",
+        summary="L",
+        response_schema=[
+            ResponseField(name="items", field_type="array", nested=[ResponseField(name="id", field_type="string")])
+        ],
+    )
+    assert _build_return_type(ep) == "list[ListThingsResponseItem]"
+
+
+def test_build_return_type_array_without_nested() -> None:
+    from mce.compiler.codegen import _build_return_type  # noqa: PLC0415
+    from mce.models import EndpointSpec, ResponseField  # noqa: PLC0415
+
+    ep = EndpointSpec(
+        path="/x",
+        method="GET",
+        operation_id="list_things",
+        summary="L",
+        response_schema=[ResponseField(name="items", field_type="array")],
+    )
+    assert _build_return_type(ep) == "list[Any]"
+
+
+def test_build_return_type_no_schema_returns_any() -> None:
+    from mce.compiler.codegen import _build_return_type  # noqa: PLC0415
+    from mce.models import EndpointSpec  # noqa: PLC0415
+
+    ep = EndpointSpec(path="/x", method="GET", operation_id="get_x", summary="X", response_schema=[])
+    assert _build_return_type(ep) == "Any"

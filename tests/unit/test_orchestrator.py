@@ -439,3 +439,218 @@ def test_write_skills_noop_when_none(tmp_path: Path) -> None:
     server_dir.mkdir()
     orchestrator._write_skills(server_dir, None, "weather")
     assert not (server_dir / "skills.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# _find_latest_server_dir — lines 384-390
+# ---------------------------------------------------------------------------
+
+
+def test_find_latest_server_dir_returns_none_when_compiled_dir_missing(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    orchestrator = Orchestrator(config)
+    # compiled dir does not exist
+    assert orchestrator._find_latest_server_dir() is None
+
+
+def test_find_latest_server_dir_returns_none_when_no_manifests(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    compiled = tmp_path / "compiled"
+    compiled.mkdir()
+    orchestrator = Orchestrator(config)
+    assert orchestrator._find_latest_server_dir() is None
+
+
+def test_find_latest_server_dir_returns_dir_with_manifest(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    compiled = tmp_path / "compiled"
+    server_dir = compiled / "weather"
+    server_dir.mkdir(parents=True)
+    (server_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    orchestrator = Orchestrator(config)
+    result = orchestrator._find_latest_server_dir()
+    assert result == server_dir
+
+
+# ---------------------------------------------------------------------------
+# _resolve_mce_command — lines 405-412
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_mce_command_fallback_when_no_venv(tmp_path: Path) -> None:
+    """Falls back to sys.executable bin dir when .venv is not found."""
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    compiled = tmp_path / "compiled"
+    result = Orchestrator._resolve_mce_command(compiled)
+    expected_dir = str(Path(sys.executable).parent)
+    assert result.startswith(expected_dir)
+
+
+def test_resolve_mce_command_finds_venv_mce(tmp_path: Path) -> None:
+    """Returns .venv/bin/mce when found within parent dirs."""
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    mce_bin = venv_bin / "mce"
+    mce_bin.write_text("#!/bin/bash\n", encoding="utf-8")
+    mce_bin.chmod(0o755)
+
+    # compiled dir is nested under tmp_path
+    compiled = tmp_path / "compiled"
+    compiled.mkdir()
+    result = Orchestrator._resolve_mce_command(compiled)
+    assert result == str(mce_bin)
+
+
+# ---------------------------------------------------------------------------
+# _auth_env_hints — lines 431-464
+# ---------------------------------------------------------------------------
+
+
+def test_auth_env_hints_static() -> None:
+    from mce.models import StaticAuthConfig  # noqa: PLC0415
+
+    hints = Orchestrator._auth_env_hints("my-api", StaticAuthConfig(value="Bearer tok"))
+    assert hints == {"MCE_MY_API_AUTH": "Bearer tok"}
+
+
+def test_auth_env_hints_jwt() -> None:
+    from mce.models import JwtAuthConfig  # noqa: PLC0415
+
+    hints = Orchestrator._auth_env_hints("my-api", JwtAuthConfig(token="eyJhb"))
+    assert hints == {"MCE_MY_API_AUTH": "Bearer eyJhb"}
+
+
+def test_auth_env_hints_oauth2_with_ref() -> None:
+    from mce.models import OAuth2AuthConfig  # noqa: PLC0415
+
+    auth = OAuth2AuthConfig(token_url="https://auth.example.com/token", client_id="ci", client_secret="${MY_SECRET}")
+    hints = Orchestrator._auth_env_hints("svc", auth)
+    assert "MY_SECRET" in hints
+    assert hints["MY_SECRET"] == "${MY_SECRET}"
+
+
+def test_auth_env_hints_oauth2_literal_secret_returns_empty() -> None:
+    from mce.models import OAuth2AuthConfig  # noqa: PLC0415
+
+    auth = OAuth2AuthConfig(token_url="https://auth.example.com/token", client_id="ci", client_secret="literal-secret")
+    hints = Orchestrator._auth_env_hints("svc", auth)
+    assert hints == {}
+
+
+def test_auth_env_hints_keycloak_with_ref() -> None:
+    from mce.models import KeycloakAuthConfig  # noqa: PLC0415
+
+    auth = KeycloakAuthConfig(
+        base_url="https://kc.example.com/auth", realm="myrealm", client_id="ci", client_secret="${KC_SECRET}"
+    )
+    hints = Orchestrator._auth_env_hints("svc", auth)
+    assert "KC_SECRET" in hints
+
+
+def test_auth_env_hints_session_with_refs() -> None:
+    from mce.models import SessionAuthConfig  # noqa: PLC0415
+
+    auth = SessionAuthConfig(login_url="https://app.example.com/login", username="${APP_USER}", password="${APP_PASS}")
+    hints = Orchestrator._auth_env_hints("svc", auth)
+    assert "APP_USER" in hints
+    assert "APP_PASS" in hints
+
+
+def test_auth_env_hints_session_literal_returns_empty() -> None:
+    from mce.models import SessionAuthConfig  # noqa: PLC0415
+
+    auth = SessionAuthConfig(login_url="https://app.example.com/login", username="user", password="pass")
+    hints = Orchestrator._auth_env_hints("svc", auth)
+    assert hints == {}
+
+
+def test_auth_env_hints_unknown_type_returns_empty() -> None:
+    hints = Orchestrator._auth_env_hints("svc", object())
+    assert hints == {}
+
+
+# ---------------------------------------------------------------------------
+# _generate_mcp_json — lines 510-516 (auth, extra_headers, server_url_vars)
+# ---------------------------------------------------------------------------
+
+
+async def test_generate_mcp_json_includes_extra_headers(tmp_path: Path) -> None:
+    """Extra headers appear serialised as JSON in the env block."""
+    servers = [
+        {
+            "name": "weather",
+            "swagger_url": str(FIXTURES_DIR / "weather_api.yaml"),
+            "base_url": "https://api.weather.example.com/v1",
+            "extra_headers": {"kbn-version": "8.0.0"},
+        }
+    ]
+    _write_swagger_yaml(tmp_path, servers)
+    config = _make_config(tmp_path, str(tmp_path / "swaggers.yaml"))
+    orchestrator = Orchestrator(config)
+    result = await orchestrator.compile_all()
+    assert result.mcp_json is not None
+    mcp = json.loads(result.mcp_json)
+    env = mcp["mcpServers"]["mcp-code-execution"]["env"]
+    assert "MCE_WEATHER_EXTRA_HEADERS" in env
+
+
+async def test_generate_mcp_json_includes_static_auth(tmp_path: Path) -> None:
+    """Static auth value appears in the env block."""
+    servers = [
+        {
+            "name": "weather",
+            "swagger_url": str(FIXTURES_DIR / "weather_api.yaml"),
+            "base_url": "https://api.weather.example.com/v1",
+            "auth": {"type": "static", "value": "Bearer mytoken"},
+        }
+    ]
+    _write_swagger_yaml(tmp_path, servers)
+    config = _make_config(tmp_path, str(tmp_path / "swaggers.yaml"))
+    orchestrator = Orchestrator(config)
+    result = await orchestrator.compile_all()
+    assert result.mcp_json is not None
+    mcp = json.loads(result.mcp_json)
+    env = mcp["mcpServers"]["mcp-code-execution"]["env"]
+    assert env.get("MCE_WEATHER_AUTH") == "Bearer mytoken"
+
+
+async def test_generate_mcp_json_includes_enable_additional_tools_false(tmp_path: Path) -> None:
+    """MCE_ENABLE_ADDITIONAL_TOOLS is always emitted as 'false' by default."""
+    servers = [
+        {
+            "name": "weather",
+            "swagger_url": str(FIXTURES_DIR / "weather_api.yaml"),
+            "base_url": "https://api.weather.example.com/v1",
+        }
+    ]
+    _write_swagger_yaml(tmp_path, servers)
+    config = _make_config(tmp_path, str(tmp_path / "swaggers.yaml"))
+    result = await Orchestrator(config).compile_all()
+    assert result.mcp_json is not None
+    env = json.loads(result.mcp_json)["mcpServers"]["mcp-code-execution"]["env"]
+    assert env["MCE_ENABLE_ADDITIONAL_TOOLS"] == "false"
+
+
+# ---------------------------------------------------------------------------
+# base_url propagation from spec (line 172)
+# ---------------------------------------------------------------------------
+
+
+async def test_compile_propagates_base_url_from_spec_when_not_set(tmp_path: Path) -> None:
+    """When source.base_url is empty, the parsed spec's base_url is propagated."""
+    servers = [
+        {
+            "name": "weather",
+            "swagger_url": str(FIXTURES_DIR / "weather_api.yaml"),
+            # no base_url — falls back to spec
+        }
+    ]
+    _write_swagger_yaml(tmp_path, servers)
+    config = _make_config(tmp_path, str(tmp_path / "swaggers.yaml"))
+    result = await Orchestrator(config).compile_all()
+    assert result.mcp_json is not None
+    env = json.loads(result.mcp_json)["mcpServers"]["mcp-code-execution"]["env"]
+    assert "MCE_WEATHER_BASE_URL" in env
+    assert env["MCE_WEATHER_BASE_URL"]  # non-empty

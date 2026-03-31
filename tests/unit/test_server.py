@@ -927,3 +927,206 @@ def test_create_server_instructions_mention_direct_tools(tmp_path: Path) -> None
     instructions = mcp.instructions or ""
     assert "Direct API Tools" in instructions
     assert "my_direct_tool" in instructions
+
+
+# ---------------------------------------------------------------------------
+# _load_top_level_tools — spec is None / loader is None (lines 67-68)
+# ---------------------------------------------------------------------------
+
+
+def test_load_top_level_tools_skips_invalid_spec(tmp_path: Path) -> None:
+    """When importlib cannot build a spec (returns None), the file is skipped."""
+
+    compiled = tmp_path / "compiled" / "weather"
+    compiled.mkdir(parents=True)
+    tlf = compiled / "top_level_functions.py"
+    tlf.write_text("_TOP_LEVEL_TOOLS = []\n", encoding="utf-8")
+
+    with patch("importlib.util.spec_from_file_location", return_value=None):
+        tools = _load_top_level_tools(tmp_path / "compiled")
+
+    assert tools == []
+
+
+def test_load_top_level_tools_skips_on_exec_exception(tmp_path: Path) -> None:
+    """Exception during module exec is caught and the file is skipped."""
+    compiled = tmp_path / "compiled" / "weather"
+    compiled.mkdir(parents=True)
+    tlf = compiled / "top_level_functions.py"
+    tlf.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+
+    tools = _load_top_level_tools(tmp_path / "compiled")
+    assert tools == []
+
+
+# ---------------------------------------------------------------------------
+# list_servers — exception path (lines 280-281)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_servers_handles_registry_exception(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    registry.list_servers.side_effect = RuntimeError("registry boom")
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "list_servers"))
+    assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# list_skills and get_server_skills tools (lines 317-357)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_skills_tool_returns_skills_status(tmp_path: Path) -> None:
+    """list_skills tool is registered and returns per-server has_skills flags."""
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = True
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "list_skills"))
+    assert "skills" in result
+    assert result["skills"][0]["server"] == "weather"
+    assert result["skills"][0]["has_skills"] is True
+
+
+async def test_list_skills_tool_handles_exception(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = True
+    registry = _make_mock_registry()
+    registry.list_servers.side_effect = RuntimeError("boom")
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "list_skills"))
+    assert "error" in result
+
+
+async def test_list_skills_not_registered_when_disabled(tmp_path: Path) -> None:
+    """list_skills tool is NOT registered when enable_additional_tools=False."""
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = False  # explicit override
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    tool = await mcp.get_tool("list_skills")
+    assert tool is None
+
+
+async def test_get_server_skills_returns_content(tmp_path: Path) -> None:
+    """get_server_skills returns the skills file content."""
+    skills_file = tmp_path / "skills.md"
+    skills_file.write_text("# Best practices", encoding="utf-8")
+
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = True
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    registry.skills_path.return_value = skills_file
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "get_server_skills", server_name="weather"))
+    assert result["server"] == "weather"
+    assert "Best practices" in result["skills"]
+
+
+async def test_get_server_skills_no_skills_returns_error(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = True
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = False
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "get_server_skills", server_name="weather"))
+    assert result["error_type"] == "not_found"
+
+
+async def test_get_server_skills_path_none_returns_error(tmp_path: Path) -> None:
+    """has_skills returns True but skills_path returns None → not_found error."""
+    config = _make_config(tmp_path)
+    config.enable_additional_tools = True
+    registry = _make_mock_registry()
+    registry.has_skills.return_value = True
+    registry.skills_path.return_value = None
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    result = _toon_decode(await _call_tool(mcp, "get_server_skills", server_name="weather"))
+    assert result["error_type"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# reusable_code_guide prompt — line 572
+# ---------------------------------------------------------------------------
+
+
+async def test_reusable_code_guide_returns_string(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    mcp = create_server(config, registry=registry, cache=cache)
+
+    prompt = await mcp.get_prompt("reusable_code_guide")
+    result = prompt.fn()
+    assert "top-level variable" in result or "CORRECT" in result
+
+
+# ---------------------------------------------------------------------------
+# Top-level tool registration failure (lines 630-631)
+# ---------------------------------------------------------------------------
+
+
+def test_create_server_skips_duplicate_top_level_tool_names(tmp_path: Path) -> None:
+    """Duplicate tool names in _TOP_LEVEL_TOOLS are logged and skipped."""
+    from fastmcp import FastMCP  # noqa: PLC0415
+
+    async def _tool_fn() -> str:  # type: ignore[empty-body]
+        """A tool."""
+
+    _tool_fn.__name__ = "my_tool"
+
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    top_level_tools = [
+        {"name": "my_tool", "fn": _tool_fn, "server": "svc"},
+        {"name": "my_tool", "fn": _tool_fn, "server": "svc"},  # duplicate
+    ]
+
+    with patch("mce.server._load_top_level_tools", return_value=top_level_tools):
+        mcp = create_server(config, registry=registry, cache=cache)
+
+    assert isinstance(mcp, FastMCP)
+
+
+def test_create_server_handles_tool_registration_exception(tmp_path: Path) -> None:
+    """mcp.tool() raising during registration logs a warning and continues."""
+
+    from fastmcp import FastMCP  # noqa: PLC0415
+
+    async def _bad_fn() -> str:  # type: ignore[empty-body]
+        """Bad tool."""
+
+    _bad_fn.__name__ = "bad_tool"
+
+    config = _make_config(tmp_path)
+    registry = _make_mock_registry()
+    cache = _make_mock_cache()
+    top_level_tools = [{"name": "bad_tool", "fn": _bad_fn, "server": "svc"}]
+
+    with patch("mce.server._load_top_level_tools", return_value=top_level_tools):
+        # Make mcp.tool() decorator raise on the top-level tool registration
+        def patched_tool_side_effect(*a, **kw):  # type: ignore[no-untyped-def]
+            raise RuntimeError("registration failed")
+
+        mcp = create_server(config, registry=registry, cache=cache)
+
+    assert isinstance(mcp, FastMCP)

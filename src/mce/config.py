@@ -61,6 +61,9 @@ class MCEConfig(BaseSettings):
     allowed_domains: list[str] = Field(default_factory=list)
     max_code_size_bytes: int = 65_536  # 64KB
 
+    # Optional tools — disabled by default; set MCE_ENABLE_ADDITIONAL_TOOLS=true to enable
+    enable_additional_tools: bool = False
+
 
 def load_config(env_file: str | None = None) -> MCEConfig:
     """Load and return the MCE configuration.
