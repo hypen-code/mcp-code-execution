@@ -16,7 +16,7 @@
 
 ## The Solution
 
-MCE exposes **4 meta-tools + 1 prompt** instead of N API-specific tools:
+MCE exposes **4 core tools + 1 prompt** (plus optional tools) instead of N API-specific tools:
 
 ```
 list_servers        → discover available APIs and their functions
@@ -25,6 +25,13 @@ execute_code        → run Python in a sandboxed Docker container; returns a ca
 run_cached_code     → SIMD: re-run the same cached code with different input data
 
 reusable_code_guide → prompt: concise rules for writing parameterized, cacheable code
+```
+
+Optional tools (enabled via `MCE_ENABLE_ADDITIONAL_TOOLS=true`):
+
+```
+list_skills         → list which servers have a skills guide available
+get_server_skills   → fetch a server's full skills guide on demand
 ```
 
 The LLM workflow: **discover → inspect → execute → reuse (SIMD)**
@@ -48,8 +55,8 @@ flowchart TB
             CS["SwaggerParser | FunctionRegistry | CacheStore | SecurityGuard | CredentialVault"]:::core
         end
 
-        subgraph Tools["4 MCP Tools — exposed to LLM"]
-            T["list_servers | get_functions | execute_code | run_cached_code"]:::tools
+        subgraph Tools["MCP Tools — exposed to LLM"]
+            T["list_servers | get_functions | execute_code | run_cached_code\n(+ optional: list_skills | get_server_skills)"]:::tools
         end
 
         Compiler --> CS
@@ -242,6 +249,7 @@ Explicit environment variables always take precedence over values in the `.env` 
 | `MCE_LLM_ENHANCE` | `false` | Enable LLM docstring enhancement at compile time |
 | `MCE_LLM_MODEL` | `gemini/gemini-2.0-flash` | LiteLLM model string (`provider/model`) |
 | `MCE_LLM_API_KEY` | — | API key for the LLM provider |
+| `MCE_ENABLE_ADDITIONAL_TOOLS` | `false` | Enable optional `list_skills` and `get_server_skills` tools |
 | `MCE_LINT_ENABLED` | `false` | Enable ruff lint validation before sandbox execution |
 | `MCE_DOCKER_IMAGE` | `mce-sandbox:latest` | Sandbox image name |
 | `MCE_DOCKER_HOST` | — | Docker host socket (e.g. `unix:///var/run/docker.sock`) |
@@ -498,6 +506,15 @@ MCE initialize response
 
 If no server has a `skills_url`, the section is omitted entirely — no extra tokens are spent.
 
+**Optional on-demand tools (`MCE_ENABLE_ADDITIONAL_TOOLS=true`):**
+
+When enabled, two extra MCP tools are registered:
+
+- **`list_skills`** — returns each server name and whether it has a skills guide, letting the LLM discover guides before diving into a new API.
+- **`get_server_skills`** — fetches the full Markdown guide for a named server on demand (useful when the LLM wants to re-read a guide mid-session without relying solely on the `initialize` instructions).
+
+These tools are disabled by default to keep the tool list lean. Enable them when your workflow benefits from the LLM proactively consulting skills guides during a session.
+
 **Skills as an MCP resource:**
 
 Each server with a `skills.md` also exposes the content as a static MCP resource discoverable via `resources/list`:
@@ -564,6 +581,8 @@ get_forecast        → direct call, no code generation needed  ← new
 
 The server instructions also gain a **Direct API Tools** section listing each promoted function so the LLM knows to call it without going through the full workflow.
 
+> Promoted functions are registered alongside any optional tools (`list_skills`, `get_server_skills`) when `MCE_ENABLE_ADDITIONAL_TOOLS=true`.
+
 **The token-cost trade-off — read before adding functions:**
 
 Every top-level tool adds its full signature and docstring to the MCP `tools/list` response, which is loaded into the LLM's context on every session. The standard workflow avoids this: `get_functions` is called only when a function is actually needed, and only for the 1–5 functions requested.
@@ -600,7 +619,7 @@ MCE uses a **defense-in-depth** approach:
 
 1. **Code Size Limit** — Code exceeding `MCE_MAX_CODE_SIZE_BYTES` (default 64 KB) is rejected before any analysis begins.
 
-2. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Blocks dangerous imports (`os`, `sys`, `subprocess`, `socket`) and calls (`eval`, `exec`, `open`, `__import__`).
+2. **AST Security Guard** — Statically analyzes LLM-generated code before execution. Uses a two-layer approach: an explicit allowlist of safe modules (`json`, `datetime`, `re`, `math`, `pandas`, `numpy`, `openpyxl`, etc.) and a blocklist of dangerous ones (`os`, `sys`, `subprocess`, `socket`, `urllib`, …). Calls to `eval`, `exec`, `open`, and `__import__` are also blocked.
 
 3. **Ruff Lint Gate** — When `MCE_LINT_ENABLED=true`, generated code is linted before entering the sandbox. Syntactically invalid or style-violating code is rejected with actionable feedback.
 
@@ -611,6 +630,7 @@ MCE uses a **defense-in-depth** approach:
    - No host volume mounts
    - Read-only filesystem (except `/tmp`)
    - Execution timeout
+   - Pre-installed libraries: `httpx`, `pydantic`, `orjson`, `pandas`, `numpy`, `openpyxl`
 
 5. **Credential Injection** — API credentials are injected as Docker environment variables. They never appear in generated code, logs, or tool responses.
 
