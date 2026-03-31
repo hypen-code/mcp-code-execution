@@ -496,6 +496,7 @@ class Orchestrator:
             "MCE_DOCKER_IMAGE": self._config.docker_image,
             "MCE_NETWORK_MODE": self._config.network_mode,
             "MCE_CACHE_DB_PATH": str(abs_cache_db),
+            "MCE_ENABLE_ADDITIONAL_TOOLS": "false",
         }
 
         for src in sources:
