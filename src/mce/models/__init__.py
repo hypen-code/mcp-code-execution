@@ -57,6 +57,10 @@ class ServerSpec(BaseModel):
     is_read_only: bool
     endpoints: list[EndpointSpec] = Field(default_factory=list)
     swagger_hash: str
+    # Maps each distinct non-primary server URL to a module-level variable name
+    # (e.g. "https://cdn.cse.lk" → "_BASE_URL_1").  Empty when the spec has only
+    # one server and no operation/path-level overrides differ from the primary.
+    server_url_vars: dict[str, str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

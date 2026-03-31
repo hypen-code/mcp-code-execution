@@ -119,12 +119,14 @@ class Orchestrator:
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
+        compiled_specs: dict[str, ServerSpec] = {}
         for source in sources:
             try:
-                compiled = await self._compile_source(source, dry_run=dry_run)
-                if compiled:
+                count, spec = await self._compile_source(source, dry_run=dry_run)
+                compiled_specs[source.name] = spec
+                if count:
                     result.compiled.append(source.name)
-                    result.total_endpoints += compiled
+                    result.total_endpoints += count
                 else:
                     result.skipped.append(source.name)
             except Exception as exc:  # noqa: BLE001
@@ -133,7 +135,7 @@ class Orchestrator:
 
         if not dry_run:
             self._lint_all_generated_code()
-            result.mcp_json = self._generate_mcp_json(sources)
+            result.mcp_json = self._generate_mcp_json(sources, compiled_specs)
 
         logger.info(
             "compile_complete",
@@ -144,7 +146,7 @@ class Orchestrator:
         )
         return result
 
-    async def _compile_source(self, source: SwaggerSource, dry_run: bool) -> int:
+    async def _compile_source(self, source: SwaggerSource, dry_run: bool) -> tuple[int, ServerSpec]:
         """Compile a single swagger source.
 
         Args:
@@ -152,7 +154,7 @@ class Orchestrator:
             dry_run: Skip writing files.
 
         Returns:
-            Number of endpoints compiled, or 0 if skipped.
+            Tuple of (endpoints compiled or 0 if skipped, parsed ServerSpec).
 
         Raises:
             CompileError: On parsing or generation failure.
@@ -171,7 +173,7 @@ class Orchestrator:
 
         if dry_run:
             logger.info("dry_run_parsed", server=source.name, endpoints=len(spec.endpoints))
-            return len(spec.endpoints)
+            return len(spec.endpoints), spec
 
         # Fetch skills content independently of code-generation state
         skills_content: str | None = None
@@ -189,7 +191,7 @@ class Orchestrator:
             if source.top_level_functions:
                 self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
             logger.info("server_up_to_date", server=source.name)
-            return 0
+            return 0, spec
 
         # Generate code
         code = self._codegen.generate(spec)
@@ -203,7 +205,7 @@ class Orchestrator:
             self._write_top_level_functions(server_dir, spec, module_name, source.top_level_functions)
 
         logger.info("server_compiled", server=source.name, endpoints=len(spec.endpoints))
-        return len(spec.endpoints)
+        return len(spec.endpoints), spec
 
     @staticmethod
     async def _fetch_skills_content(skills_url: str, server_name: str) -> str | None:
@@ -434,7 +436,7 @@ class Orchestrator:
             StaticAuthConfig,
         )
 
-        prefix = f"MCE_{server_name.upper()}_"
+        prefix = f"MCE_{re.sub(r'[^a-zA-Z0-9]', '_', server_name).upper()}_"
         _ref_re = re.compile(r"\$\{([^}]+)\}")
 
         if isinstance(auth, StaticAuthConfig):
@@ -461,14 +463,21 @@ class Orchestrator:
 
         return {}
 
-    def _generate_mcp_json(self, sources: list[SwaggerSource]) -> str | None:
+    def _generate_mcp_json(
+        self,
+        sources: list[SwaggerSource],
+        compiled_specs: dict[str, ServerSpec],
+    ) -> str | None:
         """Generate an MCP JSON config snippet for the latest compiled server.
 
         The JSON follows the standard MCP client ``mcpServers`` shape and includes
         all environment variables required to run ``mce serve`` for the server.
+        All distinct server URLs found in each spec are emitted as separate env vars
+        so they can be changed without recompiling.
 
         Args:
             sources: All swagger sources from the config file.
+            compiled_specs: Parsed ServerSpec per source name, collected during compile.
 
         Returns:
             Formatted JSON string, or None when no compiled server exists.
@@ -490,8 +499,16 @@ class Orchestrator:
         }
 
         for src in sources:
-            env_prefix = src.name.upper()
+            # Sanitize to match the module directory name and vault's env var prefix.
+            # "cse-api" → "CSE_API" so generated code and MCP JSON are consistent.
+            env_prefix = re.sub(r"[^a-zA-Z0-9]", "_", src.name).upper()
             env[f"MCE_{env_prefix}_BASE_URL"] = src.base_url
+            # Emit one env var per extra server URL so all endpoints are configurable
+            spec = compiled_specs.get(src.name)
+            if spec:
+                for url, var_name in spec.server_url_vars.items():
+                    env_key = f"MCE_{env_prefix}_{var_name.lstrip('_')}"
+                    env[env_key] = url
             if src.auth is not None:
                 env.update(self._auth_env_hints(src.name, src.auth))
             if src.extra_headers:

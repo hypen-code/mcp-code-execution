@@ -12,10 +12,13 @@ from typing import Any{% if functions | selectattr("typeddict_classes") | list %
 
 import httpx
 
-_BASE_URL: str = os.environ["MCE_{{ server_name | upper }}_BASE_URL"]
-_AUTH_HEADER: str = os.environ.get("MCE_{{ server_name | upper }}_AUTH", "")
-_SESSION_COOKIE: str = os.environ.get("MCE_{{ server_name | upper }}_COOKIE", "")
-_EXTRA_HEADERS: dict[str, str] = json.loads(os.environ.get("MCE_{{ server_name | upper }}_EXTRA_HEADERS", "{}"))
+_BASE_URL: str = os.environ["MCE_{{ server_env_prefix }}_BASE_URL"]
+{% for sv in extra_server_vars %}
+{{ sv.var_name }}: str = os.environ.get("{{ sv.env_var }}", "{{ sv.default_url }}")
+{% endfor %}
+_AUTH_HEADER: str = os.environ.get("MCE_{{ server_env_prefix }}_AUTH", "")
+_SESSION_COOKIE: str = os.environ.get("MCE_{{ server_env_prefix }}_COOKIE", "")
+_EXTRA_HEADERS: dict[str, str] = json.loads(os.environ.get("MCE_{{ server_env_prefix }}_EXTRA_HEADERS", "{}"))
 
 
 def _headers() -> dict[str, str]:
@@ -120,7 +123,9 @@ def {{ fn.name }}({{ fn.signature }}) -> {{ fn.return_type }}:
     return _request(
         "{{ fn.method }}",
         {{ fn.path_expr }},
-        {% if fn.base_url %}
+        {% if fn.base_url_var %}
+        base_url={{ fn.base_url_var }},
+        {% elif fn.base_url %}
         base_url="{{ fn.base_url }}",
         {% endif %}
         {% if fn.has_query_params %}

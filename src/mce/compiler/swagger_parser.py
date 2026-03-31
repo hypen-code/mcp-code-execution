@@ -56,6 +56,7 @@ class SwaggerParser:
         doc_hash = hash_content(raw_content)
         description = self._extract_description()
         base_url = self._resolve_base_url()
+        server_url_vars = self._collect_extra_server_url_vars(base_url)
         endpoints = self._parse_paths()
 
         logger.info(
@@ -72,6 +73,7 @@ class SwaggerParser:
             is_read_only=self._source.is_read_only,
             endpoints=endpoints,
             swagger_hash=doc_hash,
+            server_url_vars=server_url_vars,
         )
 
     async def _fetch_document(self) -> str:
@@ -148,6 +150,58 @@ class SwaggerParser:
         except yaml.YAMLError as exc:
             raise CompileError(f"Failed to parse swagger YAML/JSON for {self._source.name}: {exc}") from exc
 
+    def _collect_extra_server_url_vars(self, primary_url: str) -> dict[str, str]:
+        """Collect all distinct non-primary server URLs from the spec and assign variable names.
+
+        Scans global ``servers[1:]``, path-item level ``servers``, and operation-level
+        ``servers`` to find every URL that differs from the primary base URL.  Each
+        unique URL gets a stable, index-based module variable name (``_BASE_URL_1``,
+        ``_BASE_URL_2``, …) so the generated code can reference them as env-var-backed
+        constants rather than hardcoded strings.
+
+        Args:
+            primary_url: The resolved primary base URL (already assigned to ``_BASE_URL``).
+
+        Returns:
+            Dict mapping each extra URL to its module variable name.
+        """
+        result: dict[str, str] = {}
+        counter = 1
+
+        def _register(raw: str) -> None:
+            nonlocal counter
+            url = raw.strip().rstrip("/")
+            if url and url != primary_url and url not in result:
+                result[url] = f"_BASE_URL_{counter}"
+                counter += 1
+
+        # Global servers (skip index 0 — that's the primary)
+        for srv in self._raw_doc.get("servers", [])[1:]:
+            if isinstance(srv, dict):
+                _register(str(srv.get("url", "")))
+
+        # Path-item and operation-level servers
+        for path_item in self._raw_doc.get("paths", {}).values():
+            if not isinstance(path_item, dict):
+                continue
+            for srv in path_item.get("servers", []):
+                if isinstance(srv, dict):
+                    _register(str(srv.get("url", "")))
+            for op in path_item.values():
+                if not isinstance(op, dict):
+                    continue
+                for srv in op.get("servers", []):
+                    if isinstance(srv, dict):
+                        _register(str(srv.get("url", "")))
+
+        if result:
+            logger.debug(
+                "extra_server_urls_collected",
+                server=self._source.name,
+                mapping={v: k for k, v in result.items()},
+            )
+        return result
+
     def _resolve_base_url(self) -> str:
         """Resolve the effective base URL for this server.
 
@@ -168,6 +222,18 @@ class SwaggerParser:
 
         # Priority 2: fall back to the spec's servers[] block
         doc_servers: list[Any] = self._raw_doc.get("servers", [])
+        if len(doc_servers) > 1:
+            urls = [str(s.get("url", "")) for s in doc_servers if isinstance(s, dict)]
+            logger.info(
+                "multiple_global_servers_found",
+                server=self._source.name,
+                total=len(doc_servers),
+                urls=urls,
+                selected=urls[0] if urls else "",
+                hint="Using servers[0] as the default base URL. "
+                "Per-endpoint overrides (operation-level 'servers:') take precedence. "
+                "Set 'base_url' in swaggers.yaml to override the default explicitly.",
+            )
         if not doc_servers:
             raise CompileError(
                 f"No base URL found for server '{self._source.name}'. "
@@ -231,6 +297,7 @@ class SwaggerParser:
                 continue
 
             path_level_params: list[Any] = path_item.get("parameters", [])
+            path_level_servers: list[Any] = path_item.get("servers", [])
 
             for method, operation in path_item.items():
                 if method.lower() not in ("get", "post", "put", "patch", "delete", "head", "options"):
@@ -239,7 +306,9 @@ class SwaggerParser:
                     continue
 
                 try:
-                    endpoint = self._parse_operation(path, method.upper(), operation, path_level_params)
+                    endpoint = self._parse_operation(
+                        path, method.upper(), operation, path_level_params, path_level_servers
+                    )
                     if endpoint:
                         endpoints.append(endpoint)
                     else:
@@ -258,20 +327,50 @@ class SwaggerParser:
 
         return endpoints
 
+    @staticmethod
+    def _resolve_endpoint_base_url(operation: dict[str, Any], path_level_servers: list[Any]) -> str:
+        """Resolve the per-endpoint base URL using the OpenAPI 3.x server priority chain.
+
+        Priority: operation-level servers > path-item-level servers > (empty = global default).
+        Returns an empty string when neither level defines a server override, which causes
+        the generated code to fall back to the module-level ``_BASE_URL`` env var.
+
+        Args:
+            operation: Operation object dict from the swagger document.
+            path_level_servers: Servers list from the parent path-item, if any.
+
+        Returns:
+            Resolved base URL string (trailing slash stripped), or ``""`` for global default.
+        """
+        for servers in (operation.get("servers", []), path_level_servers):
+            if servers and isinstance(servers, list):
+                first = servers[0]
+                if isinstance(first, dict):
+                    url = str(first.get("url", "")).strip().rstrip("/")
+                    if url:
+                        return url
+        return ""
+
     def _parse_operation(
         self,
         path: str,
         method: str,
         operation: dict[str, Any],
         path_level_params: list[Any],
+        path_level_servers: list[Any] | None = None,
     ) -> EndpointSpec | None:
         """Parse a single API operation into an EndpointSpec.
+
+        Server resolution follows the OpenAPI 3.x priority chain:
+        operation-level servers > path-item-level servers > global servers (handled via _BASE_URL).
+        An empty string means "use the global default" (_BASE_URL from the env var).
 
         Args:
             path: URL path string.
             method: HTTP method (uppercase).
             operation: Operation object dict from swagger.
             path_level_params: Parameters defined at path level.
+            path_level_servers: Servers defined at path-item level (middle priority).
 
         Returns:
             EndpointSpec if parseable, None to skip.
@@ -302,9 +401,9 @@ class SwaggerParser:
 
         response_schema = self._parse_response_schema(operation.get("responses", {}))
 
-        # Operation-level servers override the global base URL
-        op_servers: list[Any] = operation.get("servers", [])
-        op_base_url = str(op_servers[0].get("url", "")).rstrip("/") if op_servers else ""
+        # Server URL priority (OpenAPI 3.x): operation > path-item > global (_BASE_URL env var).
+        # Empty string means "fall back to the module-level _BASE_URL at runtime".
+        op_base_url = self._resolve_endpoint_base_url(operation, path_level_servers or [])
 
         return EndpointSpec(
             path=path,
