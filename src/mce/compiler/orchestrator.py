@@ -17,7 +17,7 @@ import httpx
 import yaml
 
 from mce.compiler.codegen import CodeGenerator, _build_return_type
-from mce.compiler.swagger_parser import SwaggerParser
+from mce.compiler.swagger_parser import SwaggerParser, _github_blob_to_raw
 from mce.compiler.top_level_codegen import TopLevelFunctionGenerator
 from mce.errors import CompileError
 from mce.models import EndpointManifest, ServerManifest, ServerSpec, SwaggerSource
@@ -218,6 +218,7 @@ class Orchestrator:
         Returns:
             Document content as a string, or None if the fetch failed.
         """
+        skills_url = _github_blob_to_raw(skills_url)
         parsed = urlparse(skills_url)
         if parsed.scheme in ("http", "https"):
             try:
