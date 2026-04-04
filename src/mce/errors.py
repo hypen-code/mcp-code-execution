@@ -34,6 +34,10 @@ class ExecutionTimeoutError(ExecutionError):
     """Code exceeded timeout."""
 
 
+class DockerUnavailableError(ExecutionError):
+    """Docker daemon is not running or not installed."""
+
+
 class CacheError(MCEError):
     """Cache read/write failure."""
 

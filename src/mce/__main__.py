@@ -185,10 +185,11 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
         Exit code.
     """
     from mce.compiler.orchestrator import Orchestrator, _to_module_name  # noqa: PLC0415
+    from mce.errors import DockerUnavailableError  # noqa: PLC0415
     from mce.runtime.cache import CacheStore  # noqa: PLC0415
     from mce.runtime.executor import CodeExecutor  # noqa: PLC0415
     from mce.runtime.registry import Registry  # noqa: PLC0415
-    from mce.server import create_server  # noqa: PLC0415
+    from mce.server import create_degraded_server, create_server  # noqa: PLC0415
 
     config = load_config(getattr(config_args, "env_file", None))
     logger = get_logger(__name__)
@@ -225,12 +226,31 @@ async def _cmd_serve(config_args: argparse.Namespace) -> int:
     )
 
     # Start executor (creates warm container pool if sandbox_mode=warm).
-    # startup() is inside the try so shutdown() always runs — even if startup
-    # fails mid-way (e.g. first container created, second raises), ensuring
-    # no warm containers are left orphaned in Docker.
+    # If Docker is unavailable after auto-start attempt, fall back to a
+    # degraded server that exposes only get_server_state to guide the user.
     executor = CodeExecutor(config, cache, auth_configs)
+    docker_error: str | None = None
+
     try:
         await executor.startup()
+    except DockerUnavailableError as exc:
+        docker_error = str(exc)
+        logger.error("docker_unavailable_degraded_mode", error=docker_error)
+
+    if docker_error is not None:
+        # Executor never fully started; safe to shut down any partial state.
+        await executor.shutdown()
+        mcp = create_degraded_server(docker_error)
+        transport = getattr(config_args, "transport", "stdio")
+        if transport == "stdio":
+            await mcp.run_stdio_async()
+        else:
+            await mcp.run_http_async(host=config.host, port=config.port)
+        return 0
+
+    # Normal path — executor is fully started; ensure shutdown runs even on error
+    # so warm containers are not left orphaned in Docker.
+    try:
         mcp = create_server(config, registry=registry, cache=cache, executor=executor)
         transport = getattr(config_args, "transport", "stdio")
 
