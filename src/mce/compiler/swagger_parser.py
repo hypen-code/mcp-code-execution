@@ -25,6 +25,20 @@ _MUTATING_METHODS = {"post", "put", "patch", "delete"}
 # Unsupported discriminator keywords
 _COMPLEX_KEYWORDS = {"oneOf", "anyOf", "allOf", "discriminator", "not"}
 
+_GITHUB_BLOB_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/blob/(.+)$")
+
+
+def _github_blob_to_raw(url: str) -> str:
+    """Convert a GitHub blob URL to its raw.githubusercontent.com equivalent.
+
+    https://github.com/{owner}/{repo}/blob/{branch}/{path}
+    → https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}
+    """
+    m = _GITHUB_BLOB_RE.match(url)
+    if m:
+        return f"https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}"
+    return url
+
 
 class SwaggerParser:
     """Parse OpenAPI 3.x / Swagger 2.0 documents into normalized ServerSpec models."""
@@ -96,7 +110,7 @@ class SwaggerParser:
         """Fetch swagger document from a remote URL.
 
         Args:
-            url: HTTP/HTTPS URL.
+            url: HTTP/HTTPS URL. GitHub blob URLs are automatically converted to raw content URLs.
 
         Returns:
             Response body as string.
@@ -104,6 +118,7 @@ class SwaggerParser:
         Raises:
             SwaggerFetchError: On network or HTTP errors.
         """
+        url = _github_blob_to_raw(url)
         try:
             async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
                 response = await client.get(url, follow_redirects=True)
