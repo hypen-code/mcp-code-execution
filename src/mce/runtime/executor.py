@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 import aiodocker
 import aiodocker.containers
 
-from mce.errors import ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
+from mce.errors import DockerUnavailableError, ExecutionError, ExecutionTimeoutError, LintError, SecurityViolationError
 from mce.models import ExecutionResult
 from mce.security.ast_guard import ASTGuard
 from mce.security.vault import build_all_server_env_vars
@@ -181,13 +181,80 @@ class CodeExecutor:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    async def _try_start_docker(self) -> bool:
+        """Attempt to start the Docker daemon using exactly one init-system command.
+
+        Picks ``systemctl`` when available, otherwise ``service``, to avoid
+        triggering more than one polkit authentication prompt.  Returns True
+        if the chosen command exits with code 0.
+        """
+        import shutil  # noqa: PLC0415
+
+        if shutil.which("systemctl") is not None:
+            cmd = ["systemctl", "start", "docker"]
+        elif shutil.which("service") is not None:
+            cmd = ["service", "docker", "start"]
+        else:
+            logger.warning("docker_start_no_init_system_found")
+            return False
+
+        try:
+            logger.info("docker_auto_start_attempting", cmd=" ".join(cmd))
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            # 60 s covers polkit interaction time + daemon startup
+            await asyncio.wait_for(proc.wait(), timeout=60.0)
+            if proc.returncode == 0:
+                logger.info("docker_start_command_succeeded", cmd=cmd[0])
+                return True
+            logger.warning("docker_start_command_failed", cmd=cmd[0], returncode=proc.returncode)
+        except (TimeoutError, OSError) as exc:
+            logger.warning("docker_start_command_error", cmd=cmd[0], error=str(exc))
+        return False
+
+    async def _wait_for_docker_socket(self, docker_url: str | None, socket_hint: str) -> None:
+        """Poll Docker with exponential back-off until it is ready.
+
+        Tries up to 8 times (≈30 s total) before giving up.
+
+        Raises:
+            DockerUnavailableError: If all attempts fail.
+        """
+        delays = [1, 2, 3, 4, 5, 5, 5, 5]  # seconds between retries
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+            client = aiodocker.Docker(url=docker_url)
+            try:
+                await client.version()
+                await client.close()
+                logger.info("docker_socket_ready", attempt=attempt)
+                self._docker = aiodocker.Docker(url=docker_url)
+                return
+            except Exception as exc:  # noqa: BLE001
+                await client.close()
+                last_exc = exc
+                logger.debug("docker_socket_not_ready_yet", attempt=attempt, error=str(exc))
+        raise DockerUnavailableError(
+            f"Docker daemon started but socket not ready after retries ({socket_hint}). Try restarting the MCE server."
+        ) from last_exc
+
     async def startup(self) -> None:
         """Open the Docker client and, in warm mode, pre-create the container pool.
 
+        If Docker is unreachable, automatically attempts to start the daemon via
+        the system init manager (one polkit prompt at most).  Raises
+        DockerUnavailableError if Docker cannot be reached after the attempt.
+
         Raises:
-            ExecutionError: If Docker is unreachable or image is missing.
+            DockerUnavailableError: If Docker is unreachable or cannot be started.
+            ExecutionError: If image is missing or warm pool creation fails.
         """
         docker_url = self._config.docker_host or None
+        socket_hint = self._config.docker_host or "unix:///var/run/docker.sock"
         self._docker = aiodocker.Docker(url=docker_url)
 
         # Verify Docker daemon is reachable before proceeding
@@ -196,12 +263,18 @@ class CodeExecutor:
         except Exception as exc:
             await self._docker.close()
             self._docker = None
-            socket_hint = self._config.docker_host or "unix:///var/run/docker.sock"
-            raise ExecutionError(
-                f"Cannot connect to Docker daemon ({socket_hint}). "
-                "Is Docker running? "
-                "Start Docker and retry, or set MCE_DOCKER_HOST to the correct socket path."
-            ) from exc
+
+            logger.warning("docker_unreachable_attempting_auto_start", socket=socket_hint)
+            started = await self._try_start_docker()
+
+            if started:
+                # Poll with back-off — daemon may need several seconds after start
+                await self._wait_for_docker_socket(docker_url, socket_hint)
+                # _wait_for_docker_socket sets self._docker on success
+            else:
+                raise DockerUnavailableError(
+                    f"Cannot connect to Docker daemon ({socket_hint}) and automatic start failed. Is Docker installed?"
+                ) from exc
 
         if self._config.sandbox_mode == "warm":
             self._warm_pool = _WarmPool()

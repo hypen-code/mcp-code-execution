@@ -638,6 +638,65 @@ def create_server(
     return mcp
 
 
+def create_degraded_server(error_message: str) -> FastMCP:
+    """Create a minimal MCP server for when Docker is unavailable.
+
+    Exposes only the ``get_server_state`` tool, which explains the issue
+    and guides the user to install or start Docker.  All other tools are
+    omitted so the LLM cannot attempt code execution in this state.
+
+    Args:
+        error_message: The error string from the failed Docker startup.
+
+    Returns:
+        Configured FastMCP server in degraded mode.
+    """
+    mcp: FastMCP = FastMCP(
+        name="MCE — MCP Code Execution (Degraded)",
+        instructions=(
+            "MCE is running in degraded mode — Docker is unavailable.\n"
+            "Use the `get_server_state` tool to see what is wrong and how to fix it.\n"
+            "Once Docker is running, restart the MCE server to restore full functionality."
+        ),
+    )
+
+    @mcp.tool()
+    async def get_server_state() -> dict[str, Any]:
+        """Get the current server health state and Docker setup instructions.
+
+        MCE is currently running in degraded mode because Docker is not available.
+        This tool explains the issue and provides steps to resolve it.
+
+        After fixing Docker, restart the MCE MCP server — all tools will be
+        available again and this tool will no longer appear.
+        """
+        return {
+            "status": "degraded",
+            "issue": "docker_not_found",
+            "message": error_message,
+            "description": (
+                "MCE requires Docker to run sandboxed code. "
+                "The Docker daemon is not running or Docker is not installed on this machine."
+            ),
+            "resolution": {
+                "check_installed": "docker --version",
+                "start_linux": "sudo systemctl start docker",
+                "start_macos": "open -a Docker  # or launch Docker Desktop from Applications",
+                "start_windows": "Launch Docker Desktop from the Start Menu",
+                "enable_on_boot_linux": "sudo systemctl enable docker",
+                "install_guide": "https://docs.docker.com/engine/install/",
+            },
+            "next_steps": [
+                "1. Verify Docker is installed: run `docker --version` in a terminal.",
+                "2. If not installed, follow: https://docs.docker.com/engine/install/",
+                "3. Start Docker: `sudo systemctl start docker` (Linux) or open Docker Desktop (Mac/Windows).",
+                "4. Restart the MCE MCP server — full functionality will be restored automatically.",
+            ],
+        }
+
+    return mcp
+
+
 async def initialize_server(config: MCEConfig, mcp: FastMCP) -> None:
     """Run startup initialization: load registry and initialize cache.
 
