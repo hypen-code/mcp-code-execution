@@ -7,8 +7,13 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env from CWD so it works both in dev and when installed via uvx/pip
-_ENV_FILE = Path.cwd() / ".env"
+# Resolve .env with a fallback chain:
+#   1. CWD/.env      — works when the server is launched from the project root
+#   2. <repo-root>/.env — works when the MCP client sets a different working directory
+#      (config.py lives at src/mce/config.py, so three parents up = project root)
+_CWD_ENV = Path.cwd() / ".env"
+_PKG_ENV = Path(__file__).parent.parent.parent / ".env"
+_ENV_FILE = _CWD_ENV if _CWD_ENV.exists() else _PKG_ENV
 
 
 class MCEConfig(BaseSettings):

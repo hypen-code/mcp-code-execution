@@ -574,6 +574,11 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
+        # Disable numba JIT compilation — the "no locator available" error occurs because
+        # numba cannot identify installed package source files for caching when the root
+        # filesystem is read-only. Containers are ephemeral so the JIT cache never
+        # persists between calls anyway; disabling it avoids the error at no real cost.
+        env_vars["NUMBA_DISABLE_JIT"] = "1"
 
         borrow_timeout = float(self._config.execution_timeout_seconds + 10)
 
@@ -635,6 +640,11 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
+        # Disable numba JIT compilation — the "no locator available" error occurs because
+        # numba cannot identify installed package source files for caching when the root
+        # filesystem is read-only. Containers are ephemeral so the JIT cache never
+        # persists between calls anyway; disabling it avoids the error at no real cost.
+        env_vars["NUMBA_DISABLE_JIT"] = "1"
 
         container_name = f"mce-cold-{uuid.uuid4().hex[:12]}"
         config: dict[str, Any] = {

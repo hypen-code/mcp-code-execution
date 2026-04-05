@@ -146,6 +146,30 @@ Example:
            "Missed revenue targets for the third consecutive quarter.",
            "Market closed flat amid mixed economic signals."]
   result = [{"text": t, "scores": sia.polarity_scores(t)} for t in texts]
+
+## Security Restrictions
+
+The sandbox enforces an import allowlist. The following modules are **hard-blocked** and will
+raise a security violation before the code runs (not an ImportError at runtime):
+
+**Filesystem & OS**: `os`, `sys`, `pathlib`, `glob`, `shutil`, `tempfile`, `io`
+
+**Process & System**: `subprocess`, `multiprocessing`, `threading`, `concurrent`, `signal`,
+`resource`, `pty`, `tty`, `termios`, `ctypes`
+
+**Serialisation / Introspection**: `pickle`, `marshal`, `shelve`, `importlib`, `pkgutil`,
+`inspect`, `dis`, `ast`, `builtins`, `gc`, `tokenize`, `token`, `keyword`, `symtable`,
+`code`, `codeop`
+
+**Debugging / Profiling**: `pdb`, `trace`, `profile`, `pstats`, `timeit`
+
+**Networking**: `socket`, `urllib`, `http`, `xmlrpc`, `ftplib`, `smtplib`, `poplib`,
+`imaplib`, `telnetlib`, `requests`, `aiohttp`, `tornado`, `flask`, `django`, `fastapi`,
+`starlette`
+
+Any import not in the above blocked list AND not in the explicit allowlist (stdlib math/data
+modules + the libraries listed above) is also rejected. Stick to the libraries documented in
+this response.
 """
 
 
