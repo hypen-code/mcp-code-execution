@@ -30,6 +30,124 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_SANDBOX_CAPABILITIES = """\
+## Sandbox Python Libraries
+
+### Data Processing
+**pandas** / **numpy**
+Use: tabular data manipulation, array math, time-series indexing
+Example:
+  import pandas as pd, numpy as np
+  df = pd.DataFrame({"price": np.random.randn(100).cumsum() + 100})
+  result = df["price"].describe().to_dict()
+
+### Technical Analysis
+**pandas-ta**
+Use: 130+ technical indicators (RSI, MACD, Bollinger Bands) computed directly on a DataFrame
+Example:
+  import pandas as pd, pandas_ta as ta
+  df = pd.DataFrame({"close": [100, 101, 99, 103, 102, 105, 104, 107, 106, 108,
+                                110, 109, 111, 113, 112, 115, 114, 116, 118, 117]})
+  df.ta.rsi(length=14, append=True)
+  result = df.tail(5).to_dict()
+
+**TA-Lib** (talib)
+Use: battle-tested C-backed TA indicators, candlestick pattern recognition
+Example:
+  import talib, numpy as np
+  close = np.array([100.0, 101.5, 99.8, 102.3, 103.1, 104.0, 103.5, 105.2])
+  result = {"sma": talib.SMA(close, timeperiod=5).tolist(),
+            "rsi": talib.RSI(close, timeperiod=5).tolist()}
+
+### Backtesting & Strategy
+**backtrader**
+Use: event-driven strategy backtesting with built-in broker, commission, and sizer
+Example:
+  import backtrader as bt
+  class SmaCross(bt.Strategy):
+      def __init__(self):
+          sma = bt.ind.SMA(period=5)
+          self.signal = bt.ind.CrossOver(self.data.close, sma)
+      def next(self):
+          if self.signal > 0:
+              self.buy()
+          elif self.signal < 0:
+              self.sell()
+  cerebro = bt.Cerebro()
+  cerebro.addstrategy(SmaCross)
+  result = "backtrader strategy registered"
+
+### Machine Learning & Forecasting
+**scikit-learn** (sklearn)
+Use: classification, regression, clustering, dimensionality reduction, preprocessing pipelines
+Example:
+  from sklearn.linear_model import LinearRegression
+  import numpy as np
+  X = np.array([[1],[2],[3],[4],[5],[6],[7],[8],[9],[10]])
+  y = np.array([2.1, 3.9, 6.2, 7.8, 10.1, 12.0, 14.2, 15.9, 18.1, 20.0])
+  model = LinearRegression().fit(X, y)
+  result = {"coef": round(model.coef_[0], 3), "intercept": round(model.intercept_, 3),
+            "r2": round(model.score(X, y), 4)}
+
+**prophet**
+Use: additive time-series forecasting with automatic trend, seasonality, and holiday effects
+Example:
+  from prophet import Prophet
+  import pandas as pd
+  df = pd.DataFrame({"ds": pd.date_range("2023-01-01", periods=365, freq="D"),
+                     "y": range(365)})
+  m = Prophet(yearly_seasonality=True)
+  m.fit(df)
+  future = m.make_future_dataframe(periods=30)
+  result = m.predict(future)[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(5).to_dict("records")
+
+**statsmodels**
+Use: OLS/GLS regression, ARIMA/GARCH time-series, hypothesis testing, statistical diagnostics
+Example:
+  import statsmodels.api as sm
+  import numpy as np
+  np.random.seed(42)
+  X = sm.add_constant(np.arange(50))
+  y = X[:, 1] * 2.5 + 10 + np.random.randn(50)
+  model = sm.OLS(y, X).fit()
+  result = {"r2": round(model.rsquared, 4), "coef": [round(c, 3) for c in model.params]}
+
+### Portfolio & Risk Analysis
+**PyPortfolioOpt** (pypfopt)
+Use: mean-variance optimisation, Black-Litterman, risk parity, efficient frontier weights
+Example:
+  from pypfopt import EfficientFrontier, expected_returns, risk_models
+  import pandas as pd, numpy as np
+  np.random.seed(0)
+  prices = pd.DataFrame(
+      np.random.randn(252, 3).cumsum(0) + 100, columns=["AAPL", "MSFT", "GOOG"])
+  mu = expected_returns.mean_historical_return(prices)
+  S = risk_models.sample_cov(prices)
+  ef = EfficientFrontier(mu, S)
+  result = dict(ef.max_sharpe())
+
+**cvxpy**
+Use: convex optimisation — portfolio weight constraints, risk minimisation, factor models
+Example:
+  import cvxpy as cp, numpy as np
+  w = cp.Variable(3)
+  expected_ret = np.array([0.10, 0.15, 0.08])
+  prob = cp.Problem(cp.Maximize(expected_ret @ w), [cp.sum(w) == 1, w >= 0])
+  prob.solve()
+  result = {"weights": [round(v, 4) for v in w.value]}
+
+### Sentiment Analysis
+**vaderSentiment**
+Use: rule-based sentiment scoring tuned for social media and financial news text
+Example:
+  from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+  sia = SentimentIntensityAnalyzer()
+  texts = ["The stock surged 20% on strong earnings beat!",
+           "Missed revenue targets for the third consecutive quarter.",
+           "Market closed flat amid mixed economic signals."]
+  result = [{"text": t, "scores": sia.polarity_scores(t)} for t in texts]
+"""
+
 
 def _load_top_level_tools(compiled_dir: str | Path) -> list[dict[str, Any]]:
     """Scan the compiled directory for ``top_level_functions.py`` files and load them.
@@ -355,6 +473,16 @@ def create_server(
                 )
             logger.info("tool_get_server_skills_called", server=server_name)
             return str(_toon_encode({"server": server_name, "skills": path.read_text(encoding="utf-8")}))
+
+        @mcp.tool()
+        async def get_sandbox_capabilities() -> str:
+            """List Python libraries available in the sandbox with use cases and code examples.
+
+            Returns a catalogue of every pre-installed library — technical analysis, backtesting,
+            machine learning, portfolio optimisation, and sentiment analysis — with one runnable
+            code example per library so you can write correct execute_code calls immediately.
+            """
+            return _SANDBOX_CAPABILITIES
 
     @mcp.tool()
     async def get_functions(functions: list[dict[str, str]]) -> str:

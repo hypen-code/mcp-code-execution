@@ -61,6 +61,9 @@ class MCEConfig(BaseSettings):
     allowed_domains: list[str] = Field(default_factory=list)
     max_code_size_bytes: int = 65_536  # 64KB
 
+    # Docker memory limit for sandbox containers — increase for ML workloads (e.g. Prophet, scikit-learn)
+    container_memory_limit: str = "256m"
+
     # Optional tools — disabled by default; set MCE_ENABLE_ADDITIONAL_TOOLS=true to enable
     enable_additional_tools: bool = False
 
