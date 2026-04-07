@@ -116,6 +116,18 @@ _ALLOWED_MODULES: frozenset[str] = frozenset(
         "pandas",
         "numpy",
         "__future__",
+        # Financial / ML stack
+        "pandas_ta",
+        "talib",
+        "backtrader",
+        "sklearn",
+        "prophet",
+        "statsmodels",
+        "pypfopt",
+        "cvxpy",
+        "scipy",
+        "vaderSentiment",
+        "holidays",
     }
 )
 

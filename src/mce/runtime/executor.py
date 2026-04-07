@@ -61,6 +61,19 @@ _MAX_OUTPUT_BYTES = 1_048_576  # 1 MB
 # Mount point for compiled functions inside every sandbox container
 _CONTAINER_COMPILED_PATH = "/mce_compiled"
 
+# Python command used to launch the sandbox entrypoint (shared between cold & warm modes)
+_SANDBOX_ENTRYPOINT_CMD = ["python", "-X", "jit", "/workspace/entrypoint.py"]
+
+_MEMORY_SUFFIXES = {"k": 1_024, "m": 1_048_576, "g": 1_073_741_824}
+
+
+def _parse_memory_bytes(value: str) -> int:
+    """Parse a human-readable memory string (e.g. '256m', '1g') into bytes."""
+    value = value.strip().lower()
+    if value[-1] in _MEMORY_SUFFIXES:
+        return int(value[:-1]) * _MEMORY_SUFFIXES[value[-1]]
+    return int(value)
+
 
 def _detect_servers_used(code: str) -> list[str]:
     """Detect which server function modules are imported in the code.
@@ -466,8 +479,8 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         """
         compiled_host_path = str(self._compiled_dir.resolve())
         return {
-            "Memory": 256 * 1_048_576,
-            "MemorySwap": 256 * 1_048_576,
+            "Memory": _parse_memory_bytes(self._config.container_memory_limit),
+            "MemorySwap": _parse_memory_bytes(self._config.container_memory_limit),
             "CpuPeriod": 100_000,
             "CpuQuota": 50_000,
             "SecurityOpt": ["no-new-privileges:true"],
@@ -561,13 +574,18 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
+        # Disable numba JIT compilation — the "no locator available" error occurs because
+        # numba cannot identify installed package source files for caching when the root
+        # filesystem is read-only. Containers are ephemeral so the JIT cache never
+        # persists between calls anyway; disabling it avoids the error at no real cost.
+        env_vars["NUMBA_DISABLE_JIT"] = "1"
 
         borrow_timeout = float(self._config.execution_timeout_seconds + 10)
 
         async with self._warm_pool.borrow(timeout=borrow_timeout) as container:
             try:
                 exec_obj = await container.exec(
-                    cmd=["python", "/workspace/entrypoint.py"],
+                    cmd=_SANDBOX_ENTRYPOINT_CMD,
                     environment=env_vars,
                     stdout=True,
                     stderr=False,
@@ -622,6 +640,11 @@ _sys.path.insert(0, {_CONTAINER_COMPILED_PATH!r})
         env_vars = build_all_server_env_vars(servers_used, {n: self._auth_configs.get(n) for n in servers_used} or None)
         env_vars["MCE_EXEC_CODE"] = base64.b64encode(code.encode("utf-8")).decode("ascii")
         env_vars["MCE_EXEC_TIMEOUT"] = str(self._config.execution_timeout_seconds)
+        # Disable numba JIT compilation — the "no locator available" error occurs because
+        # numba cannot identify installed package source files for caching when the root
+        # filesystem is read-only. Containers are ephemeral so the JIT cache never
+        # persists between calls anyway; disabling it avoids the error at no real cost.
+        env_vars["NUMBA_DISABLE_JIT"] = "1"
 
         container_name = f"mce-cold-{uuid.uuid4().hex[:12]}"
         config: dict[str, Any] = {
