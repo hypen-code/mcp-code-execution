@@ -430,6 +430,7 @@ class Orchestrator:
             Dict of env var name → placeholder value suitable for MCP JSON.
         """
         from mce.models import (  # noqa: PLC0415
+            BasicAuthConfig,
             JwtAuthConfig,
             KeycloakAuthConfig,
             OAuth2AuthConfig,
@@ -453,7 +454,7 @@ class Orchestrator:
                 return {var_name: f"${{{var_name}}}"}
             return {}  # literal secret — don't embed in MCP JSON
 
-        if isinstance(auth, SessionAuthConfig):
+        if isinstance(auth, (BasicAuthConfig, SessionAuthConfig)):
             hints: dict[str, str] = {}
             for field_val in (auth.username, auth.password):
                 match = _ref_re.search(field_val)
