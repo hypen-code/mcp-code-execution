@@ -103,6 +103,14 @@ class KeycloakAuthConfig(BaseModel):
     scope: str = ""
 
 
+class BasicAuthConfig(BaseModel):
+    """HTTP Basic auth — base64-encodes username:password into the Authorization header."""
+
+    type: Literal["basic"] = "basic"
+    username: str  # supports ${VAR} references
+    password: str  # supports ${VAR} references
+
+
 class SessionAuthConfig(BaseModel):
     """Session-based auth — logs in and caches the session cookie or bearer token.
 
@@ -124,7 +132,7 @@ class SessionAuthConfig(BaseModel):
 
 
 AuthConfig = Annotated[
-    StaticAuthConfig | JwtAuthConfig | OAuth2AuthConfig | KeycloakAuthConfig | SessionAuthConfig,
+    StaticAuthConfig | JwtAuthConfig | BasicAuthConfig | OAuth2AuthConfig | KeycloakAuthConfig | SessionAuthConfig,
     Field(discriminator="type"),
 ]
 

@@ -326,12 +326,13 @@ For most deployments the default warm mode is the right choice. Switch to cold i
 
 ### Authentication
 
-MCE supports six auth types, configured per-server in `config/swaggers.yaml`. Tokens for dynamic types (OAuth2, Keycloak, Session) are **fetched automatically** and cached with TTL — no manual rotation required.
+MCE supports seven auth types, configured per-server in `config/swaggers.yaml`. Tokens for dynamic types (OAuth2, Keycloak, Session) are **fetched automatically** and cached with TTL — no manual rotation required.
 
 | Type | Header set | Use when |
 |---|---|---|
 | `static` | `Authorization` | API key or pre-built `Bearer`/`Basic` header |
 | `jwt` | `Authorization` | You have a raw JWT string (auto-wrapped as `Bearer <token>`) |
+| `basic` | `Authorization` | Username + password — MCE base64-encodes them as `Basic <token>` |
 | `oauth2` | `Authorization` | Any OAuth2 server with a standard `/token` endpoint (client credentials) |
 | `keycloak` | `Authorization` | Keycloak OIDC — token URL built from `base_url` + `realm` |
 | `session` | `Cookie` (or `Authorization`) | Apps that use HTTP cookie sessions (JSESSIONID, PHPSESSID, etc.) |
@@ -360,6 +361,15 @@ servers:
     auth:
       type: jwt
       token: "${IVF_JWT_TOKEN}"
+
+  # HTTP Basic auth — MCE base64-encodes username:password automatically
+  - name: internal_api
+    swagger_url: "./internal-api.yaml"
+    base_url: "https://internal.example.com/api"
+    auth:
+      type: basic
+      username: "${INTERNAL_API_USER}"
+      password: "${INTERNAL_API_PASS}"
 
   # Generic OAuth2 client credentials
   - name: salesforce
@@ -677,6 +687,11 @@ When `MCE_LLM_ENHANCE=true`, the compiler sends the generated `functions.py` sou
   ```yaml
   auth_header: "Bearer ${MY_API_TOKEN}"      # safe — resolved at runtime
   # auth_header: "Bearer sk-actual-secret"   # unsafe — literal value
+
+  auth:
+    type: basic
+    username: "${API_USER}"                  # safe — resolved from env
+    password: "${API_PASS}"                  # safe — resolved from env
 
   auth:
     type: keycloak

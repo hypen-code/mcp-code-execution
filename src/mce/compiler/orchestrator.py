@@ -430,6 +430,7 @@ class Orchestrator:
             Dict of env var name → placeholder value suitable for MCP JSON.
         """
         from mce.models import (  # noqa: PLC0415
+            BasicAuthConfig,
             JwtAuthConfig,
             KeycloakAuthConfig,
             OAuth2AuthConfig,
@@ -453,14 +454,33 @@ class Orchestrator:
                 return {var_name: f"${{{var_name}}}"}
             return {}  # literal secret — don't embed in MCP JSON
 
+        if isinstance(auth, BasicAuthConfig):
+            import base64  # noqa: PLC0415
+
+            username_has_ref = _ref_re.search(auth.username)
+            password_has_ref = _ref_re.search(auth.password)
+            if username_has_ref or password_has_ref:
+                # Can't compute token at compile time — emit the var refs so the
+                # user knows which env vars to set for the mce serve process.
+                hints: dict[str, str] = {}
+                for field_val in (auth.username, auth.password):
+                    match = _ref_re.search(field_val)
+                    if match:
+                        var_name = match.group(1)
+                        hints[var_name] = f"${{{var_name}}}"
+                return hints
+            # Literal credentials — compute the token now and bake it into the MCP JSON.
+            token = base64.b64encode(f"{auth.username}:{auth.password}".encode()).decode()
+            return {f"{prefix}AUTH": f"Basic {token}"}
+
         if isinstance(auth, SessionAuthConfig):
-            hints: dict[str, str] = {}
+            session_hints: dict[str, str] = {}
             for field_val in (auth.username, auth.password):
                 match = _ref_re.search(field_val)
                 if match:
                     var_name = match.group(1)
-                    hints[var_name] = f"${{{var_name}}}"
-            return hints
+                    session_hints[var_name] = f"${{{var_name}}}"
+            return session_hints
 
         return {}
 

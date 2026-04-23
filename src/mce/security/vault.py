@@ -77,13 +77,21 @@ def resolve_auth_config(server_name: str, auth: AuthConfig) -> str:
     Returns:
         Full Authorization header value, e.g. "Bearer eyJ...".
     """
-    from mce.models import JwtAuthConfig, StaticAuthConfig
+    import base64
+
+    from mce.models import BasicAuthConfig, JwtAuthConfig, StaticAuthConfig
 
     if isinstance(auth, StaticAuthConfig):
         return resolve_env_references(auth.value)
 
     if isinstance(auth, JwtAuthConfig):
         return f"Bearer {resolve_env_references(auth.token)}"
+
+    if isinstance(auth, BasicAuthConfig):
+        username = resolve_env_references(auth.username)
+        password = resolve_env_references(auth.password)
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return f"Basic {token}"
 
     # OAuth2 / Keycloak — check cache first
     cached = _TOKEN_CACHE.get(server_name)

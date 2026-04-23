@@ -7,8 +7,13 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env from CWD so it works both in dev and when installed via uvx/pip
-_ENV_FILE = Path.cwd() / ".env"
+# Resolve .env with a fallback chain:
+#   1. CWD/.env      — works when the server is launched from the project root
+#   2. <repo-root>/.env — works when the MCP client sets a different working directory
+#      (config.py lives at src/mce/config.py, so three parents up = project root)
+_CWD_ENV = Path.cwd() / ".env"
+_PKG_ENV = Path(__file__).parent.parent.parent / ".env"
+_ENV_FILE = _CWD_ENV if _CWD_ENV.exists() else _PKG_ENV
 
 
 class MCEConfig(BaseSettings):
@@ -60,6 +65,9 @@ class MCEConfig(BaseSettings):
     # Security
     allowed_domains: list[str] = Field(default_factory=list)
     max_code_size_bytes: int = 65_536  # 64KB
+
+    # Docker memory limit for sandbox containers — increase for ML workloads (e.g. Prophet, scikit-learn)
+    container_memory_limit: str = "256m"
 
     # Optional tools — disabled by default; set MCE_ENABLE_ADDITIONAL_TOOLS=true to enable
     enable_additional_tools: bool = False
