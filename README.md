@@ -461,6 +461,13 @@ servers:
     is_read_only: false
     top_level_functions:                       # Optional: expose selected functions as direct MCP tools
       - getAvailableRooms
+
+  - name: xquik
+    swagger_url: "https://docs.xquik.com/openapi.yaml"
+    base_url: "https://xquik.com/api/v1"
+    is_read_only: true
+    extra_headers:
+      X-API-Key: "${XQUIK_API_KEY}"
 ```
 
 > If `auth_header` and `auth` are both omitted, the server is treated as a public API — no `Authorization` header is injected.

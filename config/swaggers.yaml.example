@@ -5,6 +5,13 @@ servers:
     auth_header: "${WEATHER_API_KEY}"
     is_read_only: true
 
+  - name: xquik
+    swagger_url: "https://docs.xquik.com/openapi.yaml"
+    base_url: "https://xquik.com/api/v1"
+    is_read_only: true
+    extra_headers:
+      X-API-Key: "${XQUIK_API_KEY}"
+
   - name: hotel_booking
     swagger_url: "./swaggers/hotel.yaml"
     base_url: "https://api.hotel.example.com/v2"
